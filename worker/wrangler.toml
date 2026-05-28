@@ -1,0 +1,32 @@
+name = "mcu-nightrun-api"
+main = "src/index.js"
+compatibility_date = "2024-03-20"
+
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "mcu-nightrun-media"
+
+[[kv_namespaces]]
+binding = "NIGHTRUN_STORAGE"
+id = "839c72d1ab0643b6aec0a7d4f23167a1"
+
+[[mtls_certificates]]
+binding = "CORA_MTLS"
+certificate_id = "a6a1b374-c856-4ef6-b327-dc265e14887f"
+
+[vars]
+EVOLUTION_URL = "https://mcu-nightrun-whatsapp.fly.dev"
+INSTANCE_NAME = "mcu_nightrun_uba"
+FIREBASE_PROJECT_ID = "night-run-uba"
+FIREBASE_API_KEY = "AIzaSyC2CGktR6PIKUE010gyNBNkKAgBiDLLVTM"
+ASAAS_BASE_URL = "https://api.asaas.com/v3"
+CORA_BASE_URL = "https://matls-clients.api.cora.com.br"
+CORA_AUTH_MODE = "direct"
+WHATSAPP_QUEUE_LIMIT = "60"
+WHATSAPP_QUEUE_CONCURRENCY = "6"
+WHATSAPP_QUEUE_STAGGER_MS = "150"
+WHATSAPP_SEND_DELAY_MS = "250"
+WHATSAPP_QUEUE_MAX_ATTEMPTS = "3"
+
+[triggers]
+crons = ["* * * * *"]

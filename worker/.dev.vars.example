@@ -1,0 +1,3 @@
+EVOLUTION_URL=https://whatsapp.seu-dominio.com
+INSTANCE_NAME=mcu_nightrun_uba
+EVOLUTION_API_KEY=change_this_to_the_same_value_as_AUTHENTICATION_API_KEY

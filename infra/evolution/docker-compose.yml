@@ -1,0 +1,64 @@
+services:
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    container_name: nightrun_evolution_api
+    restart: unless-stopped
+    env_file:
+      - .env.example
+      - path: .env.local.example
+        required: false
+      - path: .env
+        required: false
+    depends_on:
+      redis:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${EVOLUTION_PORT:-8080}:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - evolution
+
+  redis:
+    image: redis:7-alpine
+    container_name: nightrun_evolution_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - evolution
+
+  postgres-local:
+    image: postgres:16-alpine
+    container_name: nightrun_evolution_postgres
+    restart: unless-stopped
+    profiles:
+      - local-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE:-evolution}
+      POSTGRES_USER: ${POSTGRES_USERNAME:-evolution}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local_only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - evolution
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: nightrun_evolution_tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN}
+    depends_on:
+      - evolution-api
+    networks:
+      - evolution
+
+networks:
+  evolution:
+    name: nightrun_evolution
+
+volumes:
+  evolution_instances:
+  redis_data:
+  postgres_data:

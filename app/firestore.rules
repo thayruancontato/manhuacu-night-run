@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Função para verificar se o usuário é admin
+    function isAdmin() {
+      return request.auth != null && 
+        exists(/databases/$(database)/documents/nightrun_admins/$(request.auth.token.email));
+    }
+    
+    // Configurações Gerais: Apenas Admins editam, qualquer um lê (se necessário)
+    match /nightrun_settings/{document} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Configurações de Sistema (ex: WhatsApp API): Apenas Admins
+    match /system_settings/{document=**} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Inscrições: Público para testes
+    match /nightrun_registrations/{document=**} {
+      allow read, write: if true;
+    }
+    
+    // Admins: Público para testes de login
+    match /nightrun_admins/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Kits e Camisetas: Leitura pública para o formulário, escrita apenas Admins
+    match /nightrun_kit_items/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /nightrun_camisetas/{sizeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Sorteios e Mensagens: Leitura e Escrita públicas para fluxo de simulação
+    match /nightrun_sorteios_config/{document=**} {
+      allow read, write: if true;
+    }
+    match /nightrun_sorteios_ganhadores/{document=**} {
+      allow read, write: if true;
+    }
+    match /nightrun_messages/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Modalidades: Leitura pública para o formulário, escrita apenas Admins
+    // Comprovantes anexados ao extrato bancario: apenas admins
+    match /nightrun_bank_movement_receipts/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    match /nightrun_modalidades/{modId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

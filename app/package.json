@@ -1,0 +1,33 @@
+{
+  "name": "app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/file-saver": "^2.0.7",
+    "@types/qrcode": "^1.5.6",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.10"
+  },
+  "dependencies": {
+    "@types/react-signature-canvas": "^1.0.7",
+    "canvas-confetti": "^1.9.4",
+    "file-saver": "^2.0.5",
+    "firebase": "^12.13.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^1.14.0",
+    "qrcode": "^1.5.4",
+    "react-easy-crop": "^5.5.7",
+    "react-router-dom": "^7.15.0",
+    "react-signature-canvas": "^1.1.0-alpha.2"
+  }
+}

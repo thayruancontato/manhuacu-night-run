@@ -5,6 +5,7 @@ import { AuthProvider } from './context/AuthContext';
 import ClosedRegistrations from './pages/ClosedRegistrations';
 import Home from './pages/Home';
 import AtletasConfirmados from './pages/AtletasConfirmados';
+import AdminBateu1000Preview from './pages/AdminBateu1000Preview';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminInscritos from './pages/AdminInscritos';
 import AdminFinanceiro from './pages/AdminFinanceiro';
@@ -72,6 +73,7 @@ function App() {
               <Route path="/inscricao/confirmada/:registrationId" element={<SuccessPaymentPage />} />
               <Route path="/sorteio/:sorteioId" element={<SorteioPublico />} />
               <Route path="/sorteio/:sorteioId/operar" element={<SorteioOperador />} />
+              <Route path="/admin/bateu1000" element={<AdminBateu1000Preview />} />
 
               {/* Shared Login */}
               <Route path="/admin/login" element={<AtletaLogin />} />

@@ -53,39 +53,9 @@ export const KitDrawer = ({ isOpen, onClose, onStart, variant = 'modal' }: KitMo
     return (
       <section className="kit-page-section" aria-label="Kit do atleta">
         <div className="kit-modal-body kit-section-body">
-          <header className="kit-modal-header">
-            <h2 className="kit-modal-title">
-              SEU KIT, <span className="highlight">SUA PERFORMANCE.</span>
-            </h2>
-            <p className="kit-modal-subtitle">
-              Tudo pronto para você viver a melhor corrida noturna da região.
-            </p>
-            <div className="kit-header-line" />
-          </header>
-
           <div className="kit-inner-container">
             <div className="kit-main-display">
-              <img src="/kit.png" alt="Kit MCU Night Run" className="kit-image" />
-            </div>
-
-            <div className="kit-items-grid">
-              {items.length === 0 ? (
-                <p style={{ gridColumn: '1/-1', textAlign: 'center', opacity: 0.5, padding: '20px' }}>
-                  Carregando itens do kit...
-                </p>
-              ) : (
-                items.map(item => (
-                  <div key={item.id} className="kit-item">
-                    <div className="kit-item-icon-box">
-                      {renderIcon(item.icone)}
-                    </div>
-                    <div className="kit-item-info">
-                      <h4>{item.nome}</h4>
-                      <p>{item.descricao}</p>
-                    </div>
-                  </div>
-                ))
-              )}
+              <img src="/imagem_nova.jpeg" alt="Kit MCU Night Run" className="kit-image" />
             </div>
 
             <footer className="kit-modal-footer">
@@ -103,39 +73,9 @@ export const KitDrawer = ({ isOpen, onClose, onStart, variant = 'modal' }: KitMo
     <div className="kit-modal-overlay" onClick={onClose}>
       <div className="kit-modal-content" onClick={e => e.stopPropagation()}>
         <div className="kit-modal-body">
-          <header className="kit-modal-header">
-            <h2 className="kit-modal-title">
-              SEU KIT, <span className="highlight">SUA PERFORMANCE.</span>
-            </h2>
-            <p className="kit-modal-subtitle">
-              Tudo pronto para você viver a melhor corrida noturna da região.
-            </p>
-            <div className="kit-header-line" />
-          </header>
-
           <div className="kit-inner-container">
             <div className="kit-main-display">
-              <img src="/kit.png" alt="Kit MCU Night Run" className="kit-image" />
-            </div>
-
-            <div className="kit-items-grid">
-              {items.length === 0 ? (
-                <p style={{ gridColumn: '1/-1', textAlign: 'center', opacity: 0.5, padding: '20px' }}>
-                  Carregando itens do kit...
-                </p>
-              ) : (
-                items.map(item => (
-                  <div key={item.id} className="kit-item">
-                    <div className="kit-item-icon-box">
-                      {renderIcon(item.icone)}
-                    </div>
-                    <div className="kit-item-info">
-                      <h4>{item.nome}</h4>
-                      <p>{item.descricao}</p>
-                    </div>
-                  </div>
-                ))
-              )}
+              <img src="/imagem_nova.jpeg" alt="Kit MCU Night Run" className="kit-image" />
             </div>
 
             <footer className="kit-modal-footer">

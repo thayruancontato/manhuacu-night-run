@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, NavLink } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
-import { doc, getDoc, onSnapshot, collection, getCountFromServer } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, collection, getCountFromServer, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { ADMIN_MENU_ITEMS } from '../config/menu';
@@ -56,12 +56,21 @@ export default function AdminLayout() {
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
-      collection(db, 'nightrun_registrations'),
+      query(collection(db, 'nightrun_registrations'), where('paymentStatus', '==', 'pago')),
       (snap) => setInscritosCount(snap.size),
       (err) => console.error('Erro ao contar inscritos', err)
     );
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    const activeGroups = ADMIN_MENU_ITEMS
+      .filter(item => item.subItems?.length && (location.pathname === item.path || location.pathname.startsWith(item.path + '/')))
+      .map(item => item.path);
+    if (activeGroups.length) {
+      setOpenGroups(current => new Set([...current, ...activeGroups]));
+    }
+  }, [location.pathname]);
 
   if (authLoading) return <AdminLayoutSkeleton variant="dashboard" />;
   if (!user || role !== 'admin') return null;
@@ -173,6 +182,7 @@ export default function AdminLayout() {
                       <NavLink
                         key={sub.to}
                         to={sub.to}
+                        end={sub.to === item.path}
                         className={({ isActive: a }) => `adm-nav-item ${a ? 'active' : ''}`}
                         onClick={() => isMobile && setSidebarOpen(false)}
                       >

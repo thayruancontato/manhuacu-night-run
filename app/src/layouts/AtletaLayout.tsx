@@ -1,7 +1,9 @@
 import { Outlet, useNavigate, NavLink } from 'react-router-dom';
 import { useState, useEffect } from 'react';
+import { signOut } from 'firebase/auth';
 import { Home, CreditCard, User, LogOut, Menu, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { auth } from '../firebase';
 import '../App.css';
 
 const NAV_ITEMS = [
@@ -11,21 +13,26 @@ const NAV_ITEMS = [
 
 export default function AtletaLayout() {
   const navigate = useNavigate();
-  const { user, role, loading, atletaData } = useAuth();
+  const { role, loading, atletaData } = useAuth();
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
+  // O acesso do atleta é identificado pela inscrição selecionada no login (ver AuthContext),
+  // não exige uma sessão real do Firebase Auth - por isso não checamos `user` aqui.
   useEffect(() => {
-    if (!loading && (!user || role !== 'atleta')) {
+    if (!loading && role !== 'atleta') {
       navigate('/atleta/login');
     }
-  }, [user, role, loading, navigate]);
+  }, [role, loading, navigate]);
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center' }}>Carregando...</div>;
-  if (!user || role !== 'atleta') return null;
+  if (role !== 'atleta') return null;
 
   const handleLogout = () => {
     localStorage.removeItem('nightrun_atleta_auth');
-    navigate('/atleta/login');
+    localStorage.removeItem('nightrun_atleta_reg_id');
+    signOut(auth).catch(() => {});
+    // Navegação completa para o contexto de autenticação recarregar do zero.
+    window.location.href = '/atleta/login';
   };
 
   return (

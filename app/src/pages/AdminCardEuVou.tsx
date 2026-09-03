@@ -8,6 +8,8 @@ import { useAuth } from '../context/AuthContext';
 import type { Modalidade } from '../types';
 import { SkeletonCard } from '../components/Skeleton';
 import { formatDateTimeBR } from '../utils/dateUtils';
+import SendCardChoiceModal from '../components/SendCardChoiceModal';
+import { groupLinkedRegistrations } from '../utils/linkedRegistrationsUtils';
 import '../styles/admin.css';
 
 const buildEuVouWhatsAppText = (registration: any, modalidadeNome: string) => {
@@ -52,6 +54,7 @@ export default function AdminCardEuVou() {
   const [search, setSearch] = useState('');
   const [zoomImageUrl, setZoomImageUrl] = useState<string | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sendChoiceFor, setSendChoiceFor] = useState<any | null>(null);
   const { showAlert } = useDialog();
   const { user } = useAuth();
 
@@ -93,40 +96,45 @@ export default function AdminCardEuVou() {
     });
   }, [registrations, search, modalidades]);
 
-  const openWhatsAppWithEuVouCard = async (registration: any) => {
-    const cleanPhone = String(registration.telefone || '').replace(/\D/g, '');
-    if (!cleanPhone) return showAlert('Telefone nao encontrado.', 'warning');
-    if (!registration.euVouCardUrl) return showAlert('Card #EUVOU nao gerado.', 'warning');
+  // Mesma lógica de vínculo do dashboard do atleta (mesmo e-mail, ou telefone que é contato de
+  // emergência de um lado ou do outro) — agrupa irmãos/familiares num único card principal.
+  const groups = useMemo(() => groupLinkedRegistrations(filtered), [filtered]);
 
-    const phone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
+  const logCardSend = async (registration: any, method: 'whatsapp_manual' | 'whatsapp_auto') => {
+    const clickedAt = new Date();
+    const historyEntry = {
+      at: clickedAt.toISOString(),
+      by: user?.email || 'admin',
+      cardUrl: registration.euVouCardUrl,
+      method,
+    };
+    await updateDoc(doc(db, 'nightrun_registrations', registration.id), {
+      euVouCardLastSendClickAt: clickedAt,
+      euVouCardSendClickCount: increment(1),
+      euVouCardSendHistory: arrayUnion(historyEntry),
+      updatedAt: clickedAt,
+    });
+    setRegistrations(prev => prev.map(item => {
+      if (item.id !== registration.id) return item;
+      return {
+        ...item,
+        euVouCardLastSendClickAt: clickedAt,
+        euVouCardSendClickCount: Number(item.euVouCardSendClickCount || 0) + 1,
+        euVouCardSendHistory: [...(item.euVouCardSendHistory || []), historyEntry],
+        updatedAt: clickedAt,
+      };
+    }));
+  };
+
+  const sendManual = async (registration: any) => {
     setSendingId(registration.id);
     try {
+      const cleanPhone = String(registration.telefone || '').replace(/\D/g, '');
+      const phone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
       const copied = await copyEuVouCardImage(registration.euVouCardUrl);
       const text = buildEuVouWhatsAppText(registration, getModalidadeNome(registration));
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
-      const clickedAt = new Date();
-      const historyEntry = {
-        at: clickedAt.toISOString(),
-        by: user?.email || 'admin',
-        cardUrl: registration.euVouCardUrl,
-        method: 'whatsapp_manual',
-      };
-      await updateDoc(doc(db, 'nightrun_registrations', registration.id), {
-        euVouCardLastSendClickAt: clickedAt,
-        euVouCardSendClickCount: increment(1),
-        euVouCardSendHistory: arrayUnion(historyEntry),
-        updatedAt: clickedAt,
-      });
-      setRegistrations(prev => prev.map(item => {
-        if (item.id !== registration.id) return item;
-        return {
-          ...item,
-          euVouCardLastSendClickAt: clickedAt,
-          euVouCardSendClickCount: Number(item.euVouCardSendClickCount || 0) + 1,
-          euVouCardSendHistory: [...(item.euVouCardSendHistory || []), historyEntry],
-          updatedAt: clickedAt,
-        };
-      }));
+      await logCardSend(registration, 'whatsapp_manual');
       showAlert(
         copied
           ? 'WhatsApp aberto com a mensagem pronta. A imagem #EUVOU foi copiada, cole na conversa antes de enviar.'
@@ -136,6 +144,13 @@ export default function AdminCardEuVou() {
     } finally {
       setSendingId(null);
     }
+  };
+
+  const openSendChoice = (registration: any) => {
+    const cleanPhone = String(registration.telefone || '').replace(/\D/g, '');
+    if (!cleanPhone) return showAlert('Telefone nao encontrado.', 'warning');
+    if (!registration.euVouCardUrl) return showAlert('Card #EUVOU nao gerado.', 'warning');
+    setSendChoiceFor(registration);
   };
 
   return (
@@ -168,28 +183,28 @@ export default function AdminCardEuVou() {
         </div>
       ) : (
         <div className="admin-card-euvou-grid">
-          {filtered.map(registration => {
-            const modalidade = getModalidadeNome(registration);
-            const sending = sendingId === registration.id;
-            const sentCount = Number(registration.euVouCardSendClickCount || registration.euVouCardSendHistory?.length || 0);
-            const sentAtRaw = registration.euVouCardLastSendClickAt?.toDate?.() || (registration.euVouCardLastSendClickAt ? new Date(registration.euVouCardLastSendClickAt) : null);
+          {groups.map(({ main, linked }) => {
+            const modalidade = getModalidadeNome(main);
+            const sending = sendingId === main.id;
+            const sentCount = Number(main.euVouCardSendClickCount || main.euVouCardSendHistory?.length || 0);
+            const sentAtRaw = main.euVouCardLastSendClickAt?.toDate?.() || (main.euVouCardLastSendClickAt ? new Date(main.euVouCardLastSendClickAt) : null);
             const sentAt = sentAtRaw && !Number.isNaN(sentAtRaw.getTime())
               ? formatDateTimeBR(sentAtRaw)
               : '';
             return (
-              <article className="admin-card-euvou-item" key={registration.id}>
+              <article className="admin-card-euvou-item" key={main.id}>
                 <button
                   type="button"
                   className="admin-card-euvou-image"
-                  onClick={() => setZoomImageUrl(registration.euVouCardUrl)}
-                  aria-label={`Ampliar card #EUVOU de ${registration.nome || 'atleta'}`}
+                  onClick={() => setZoomImageUrl(main.euVouCardUrl)}
+                  aria-label={`Ampliar card #EUVOU de ${main.nome || 'atleta'}`}
                 >
-                  <img src={registration.euVouCardUrl} alt={`Card #EUVOU de ${registration.nome || 'atleta'}`} />
+                  <img src={main.euVouCardUrl} alt={`Card #EUVOU de ${main.nome || 'atleta'}`} />
                 </button>
                 <div className="admin-card-euvou-info">
-                  <strong>{registration.nome || 'Atleta sem nome'}</strong>
+                  <strong>{main.nome || 'Atleta sem nome'}</strong>
                   <span>{modalidade}</span>
-                  <small>{registration.telefone || registration.email || 'Sem contato'}</small>
+                  <small>{main.telefone || main.email || 'Sem contato'}</small>
                   <div className={`admin-card-euvou-status ${sentCount > 0 ? 'sent' : 'pending'}`}>
                     {sentCount > 0 ? <CheckCircle size={14} /> : <Clock size={14} />}
                     <span>{sentCount > 0 ? `Enviado${sentCount > 1 ? ` ${sentCount}x` : ''}${sentAt ? ` - ${sentAt}` : ''}` : 'Nao enviado'}</span>
@@ -198,16 +213,64 @@ export default function AdminCardEuVou() {
                 <button
                   type="button"
                   className="admin-card-euvou-send"
-                  onClick={() => openWhatsAppWithEuVouCard(registration)}
+                  onClick={() => openSendChoice(main)}
                   disabled={sending}
                 >
                   <Send size={16} />
                   {sending ? 'Abrindo...' : 'Enviar'}
                 </button>
+
+                {linked.length > 0 && (
+                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed #e2e8f0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <span style={{ fontSize: '.66rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: .4 }}>
+                      Vinculados ({linked.length})
+                    </span>
+                    {linked.map(item => {
+                      const itemSending = sendingId === item.id;
+                      const itemSentCount = Number(item.euVouCardSendClickCount || item.euVouCardSendHistory?.length || 0);
+                      return (
+                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 10, padding: '6px 8px' }}>
+                          <img
+                            src={item.euVouCardUrl}
+                            alt={`Card #EUVOU de ${item.nome || 'atleta'}`}
+                            onClick={() => setZoomImageUrl(item.euVouCardUrl)}
+                            style={{ width: 32, height: 40, objectFit: 'cover', borderRadius: 6, cursor: 'zoom-in', flexShrink: 0 }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <strong style={{ display: 'block', fontSize: '.74rem', color: '#071A45', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.nome || 'Atleta sem nome'}</strong>
+                            <span style={{ display: 'block', fontSize: '.64rem', color: itemSentCount > 0 ? '#16a34a' : '#94a3b8', fontWeight: 700 }}>
+                              {itemSentCount > 0 ? `Enviado ${itemSentCount}x` : 'Nao enviado'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openSendChoice(item)}
+                            disabled={itemSending}
+                            title="Enviar card"
+                            style={{ border: 'none', background: '#071A45', color: '#fff', width: 26, height: 26, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: itemSending ? 'wait' : 'pointer', flexShrink: 0 }}
+                          >
+                            <Send size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </article>
             );
           })}
         </div>
+      )}
+
+      {sendChoiceFor && (
+        <SendCardChoiceModal
+          phone={sendChoiceFor.telefone}
+          cardUrl={sendChoiceFor.euVouCardUrl}
+          text={buildEuVouWhatsAppText(sendChoiceFor, getModalidadeNome(sendChoiceFor))}
+          onClose={() => setSendChoiceFor(null)}
+          onManualSend={() => sendManual(sendChoiceFor)}
+          onAutoSent={() => logCardSend(sendChoiceFor, 'whatsapp_auto')}
+        />
       )}
 
       {zoomImageUrl && createPortal(

@@ -26,7 +26,7 @@ export const AtletaHistory: React.FC<AtletaHistoryProps> = ({ allRegs, camisetas
             const rDate = formatDateTimeBR(r.createdAt);
             const rDist = r.categoria.includes('10') ? '10KM' : r.categoria.includes('5') ? '5KM' : r.categoria || '—';
             const rSexo = r.sexo === 'M' ? 'Masc.' : r.sexo === 'F' ? 'Fem.' : '';
-            const rKit = KITS.find(k => k.id === r.kit)?.nome || r.kit || '—';
+            const rKit = KITS.find(k => k.id === r.kit)?.nome || r.kitNome || r.kit || '—';
             const rKitSize = camisetas.find(t => t.id === r.tamanhoCamiseta);
             const rPaid = r.paymentStatus === 'pago';
             const rCancelled = r.paymentStatus === 'cancelado';

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { collection, getDocs, query, orderBy, doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { 
@@ -15,7 +16,11 @@ import { formatDateTimeBR } from '../utils/dateUtils';
 import '../App.css';
 
 export default function AdminMensagens() {
-  const [activeTab, setActiveTab] = useState('campanha');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'campanha';
+  const setActiveTab = (tab: string) => {
+    setSearchParams(tab === 'campanha' ? {} : { tab }, { replace: false });
+  };
   const [loading, setLoading] = useState(true);
   const { showAlert, showConfirm } = useDialog();
   const workerUrl = import.meta.env.VITE_WORKER_URL;

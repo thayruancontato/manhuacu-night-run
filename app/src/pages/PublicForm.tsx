@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import QRCode from 'qrcode';
 import SignatureCanvas from 'react-signature-canvas';
 import Cropper, { type Area } from 'react-easy-crop';
-import { addDoc, collection, doc, getCountFromServer, getDoc, getDocs, query, serverTimestamp, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getCountFromServer, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore';
 import { ArrowRight, Baby, Camera, CreditCard, Mail, Phone, PersonStanding, User, Users } from 'lucide-react';
 import { db } from '../firebase';
 import { CATEGORIAS, KITS, TAMANHOS_CAMISETA } from '../types';
@@ -63,6 +63,17 @@ type RegistrationPricing = {
   loteIndex: number | null;
 };
 
+type CouponDiscountType = 'fixed' | 'percent';
+
+type AppliedCoupon = {
+  id: string;
+  code: string;
+  type: CouponDiscountType;
+  value: number;
+  discountAmount: number;
+  amountAfterDiscount: number;
+};
+
 const EMPTY_LOTE_DISCOUNT: LoteDiscount = { enabled: false, type: 'percent', value: 0 };
 
 const normalizeLoteDiscount = (discount?: Partial<LoteDiscount> | null): LoteDiscount => ({
@@ -70,6 +81,20 @@ const normalizeLoteDiscount = (discount?: Partial<LoteDiscount> | null): LoteDis
   type: discount?.type === 'fixed' ? 'fixed' : 'percent',
   value: Number(discount?.value || 0),
 });
+
+const normalizeCouponCode = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '');
+
+const calculateCouponDiscount = (amountInCents: number, type: CouponDiscountType, rawValue: number) => {
+  const value = Number(rawValue || 0);
+  if (amountInCents <= 0 || value <= 0) return { discountAmount: 0, amountAfterDiscount: amountInCents };
+  const discountAmount = type === 'fixed'
+    ? Math.min(Math.round(value), amountInCents)
+    : Math.min(Math.round(amountInCents * (Math.min(value, 100) / 100)), amountInCents);
+  return {
+    discountAmount,
+    amountAfterDiscount: Math.max(amountInCents - discountAmount, 0),
+  };
+};
 
 const normalizeWhatsAppPhone = (phone: string) => {
   const cleanPhone = (phone || '').replace(/\D/g, '');
@@ -103,22 +128,22 @@ const calculateAgeFromBirthdate = (dobStr: string) => {
   return age;
 };
 
-const applyLoteDiscount = (amountInCents: number, discount?: Partial<LoteDiscount> | null) => {
-  const safeDiscount = normalizeLoteDiscount(discount);
-  if (!safeDiscount.enabled || !safeDiscount.value || safeDiscount.value <= 0) {
+const applyLoteDiscount = (amountInCents: number, rawDiscount?: Partial<LoteDiscount> | null) => {
+  const discount = normalizeLoteDiscount(rawDiscount);
+  if (!discount.enabled || !discount.value || discount.value <= 0) {
     return { amount: amountInCents, discountAmount: 0, discountLabel: '' };
   }
 
-  const discountAmount = safeDiscount.type === 'fixed'
-    ? Math.min(Math.round(safeDiscount.value), amountInCents)
-    : Math.min(Math.round(amountInCents * (Number(safeDiscount.value) / 100)), amountInCents);
+  const discountAmount = discount.type === 'fixed'
+    ? Math.min(Math.round(discount.value), amountInCents)
+    : Math.min(Math.round(amountInCents * (Number(discount.value) / 100)), amountInCents);
 
   return {
     amount: Math.max(amountInCents - discountAmount, 0),
     discountAmount,
-    discountLabel: safeDiscount.type === 'fixed'
+    discountLabel: discount.type === 'fixed'
       ? `Desconto do lote: ${formatMoney(discountAmount)}`
-      : `Desconto do lote: ${Number(safeDiscount.value)}%`,
+      : `Desconto do lote: ${Number(discount.value)}%`,
   };
 };
 
@@ -216,9 +241,14 @@ export default function PublicForm() {
   const [acceptedRegulation, setAcceptedRegulation] = useState(false);
   const [modalidades, setModalidades] = useState<any[]>([]);
   const [camisetas, setCamisetas] = useState<any[]>([]);
+  const [activeKit, setActiveKit] = useState<{ id: string; nome: string; precoForcado: boolean; precoForcadoValor: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('Processando sua inscrição...');
   const [pricePreview, setPricePreview] = useState<number | null>(null);
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponFeedback, setCouponFeedback] = useState('');
   const [showSizeTable, setShowSizeTable] = useState(false);
   const [photoCrop, setPhotoCrop] = useState<{ src: string; name: string; type: string } | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
@@ -309,12 +339,23 @@ export default function PublicForm() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [modalidadesSnap, camisetasSnap] = await Promise.all([
+        const [modalidadesSnap, camisetasSnap, kitsSnap] = await Promise.all([
           getDocs(query(collection(db, 'nightrun_modalidades'), where('ativo', '==', true))),
           getDocs(collection(db, 'nightrun_camisetas')),
+          getDocs(query(collection(db, 'nightrun_kits'), where('ativo', '==', true))),
         ]);
         setModalidades(modalidadesSnap.docs.map(d => ({ id: d.id, ...d.data() })));
         setCamisetas(camisetasSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const kitDoc = kitsSnap.docs[0];
+        if (kitDoc) {
+          const kitData = kitDoc.data();
+          setActiveKit({
+            id: kitDoc.id,
+            nome: kitData.nome || 'Kit',
+            precoForcado: !!kitData.precoForcado,
+            precoForcadoValor: Number(kitData.precoForcadoValor || 0),
+          });
+        }
       } catch (error) {
         console.error('Erro ao carregar dados do formulario:', error);
       }
@@ -416,13 +457,21 @@ export default function PublicForm() {
       try {
         const pricing = await calculateBaseAmount();
         const discount = applyRegistrationDiscount(pricing, userAge, data.categoria === 'adulto' && data.servidorPublicoMunicipal, data.categoria === 'adulto' && data.pcd);
-        setPricePreview(discount.amount);
+        const couponDiscount = appliedCoupon
+          ? calculateCouponDiscount(discount.amount, appliedCoupon.type, appliedCoupon.value)
+          : { amountAfterDiscount: discount.amount };
+        setPricePreview(couponDiscount.amountAfterDiscount);
       } catch (error) {
         console.error('Erro ao prever preço:', error);
       }
     };
     fetchPricePreview();
-  }, [stage, data.categoria, data.dataNascimento, data.servidorPublicoMunicipal, data.pcd]);
+  }, [stage, data.categoria, data.dataNascimento, data.servidorPublicoMunicipal, data.pcd, appliedCoupon]);
+
+  useEffect(() => {
+    setAppliedCoupon(null);
+    setCouponFeedback('');
+  }, [data.categoria, data.dataNascimento, data.servidorPublicoMunicipal, data.pcd, data.modalidadeId]);
 
   const selectCategory = (categoria: 'infantil' | 'adulto') => {
     setData((prev: any) => ({
@@ -488,6 +537,17 @@ export default function PublicForm() {
     ctx.drawImage(img, sx, sy, sw, sh, x, y, width, height);
   };
 
+  const drawContain = (ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, width: number, height: number) => {
+    const scale = Math.min(width / img.naturalWidth, height / img.naturalHeight);
+    const drawWidth = img.naturalWidth * scale;
+    const drawHeight = img.naturalHeight * scale;
+    const dx = x + (width - drawWidth) / 2;
+    const dy = y + (height - drawHeight) / 2;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x, y, width, height);
+    ctx.drawImage(img, dx, dy, drawWidth, drawHeight);
+  };
+
   const drawFitText = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, initialSize: number, minSize: number, color: string) => {
     const normalizedText = text.trim().toUpperCase();
     let size = initialSize;
@@ -503,8 +563,9 @@ export default function PublicForm() {
     ctx.fillText(normalizedText, x, y);
   };
 
-  const generateEuVouCard = async (photoUrl: string, modalidadeNome: string) => {
-    const [template, photo] = await Promise.all([loadImage('/modelo-card.png'), loadImage(photoUrl)]);
+  const generateEuVouCard = async (photoUrl: string, modalidadeNome: string, isKidsCard = false) => {
+    const templatePath = isKidsCard ? '/modelo-card-kids.png' : '/modelo-card.png';
+    const [template, photo] = await Promise.all([loadImage(templatePath), loadImage(photoUrl)]);
     const canvas = document.createElement('canvas');
     canvas.width = template.naturalWidth;
     canvas.height = template.naturalHeight;
@@ -527,7 +588,11 @@ export default function PublicForm() {
     ctx.beginPath();
     ctx.rect(-box.width / 2, -box.height / 2, box.width, box.height);
     ctx.clip();
-    drawCover(ctx, photo, -box.width / 2, -box.height / 2, box.width, box.height);
+    if (isKidsCard) {
+      drawContain(ctx, photo, -box.width / 2, -box.height / 2, box.width, box.height);
+    } else {
+      drawCover(ctx, photo, -box.width / 2, -box.height / 2, box.width, box.height);
+    }
     ctx.restore();
 
     // Desenha uma borda branca sem border-radius para evitar vazamentos e cobrir frestas
@@ -540,7 +605,7 @@ export default function PublicForm() {
     ctx.save();
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
-    const modalityX = canvas.width * 0.095;
+    const modalityX = canvas.width * (isKidsCard ? 0.108 : 0.095);
     const modalityY = canvas.height * 0.412;
     ctx.font = `900 ${canvas.width * 0.018}px Arial Black, Impact, sans-serif`;
     ctx.fillStyle = '#6BFF2A';
@@ -596,6 +661,12 @@ export default function PublicForm() {
   const onCropComplete = useCallback((_area: Area, pixels: Area) => setCroppedAreaPixels(pixels), []);
 
   const calculateBaseAmount = async (): Promise<RegistrationPricing> => {
+    // Kit ativo com preço forçado ignora o lote por completo - o valor abaixo vira a base
+    // do cálculo, e os descontos de idoso/PCD/servidor/cupom continuam se aplicando por cima
+    // normalmente, exatamente como aconteceria com o preço do lote.
+    if (activeKit?.precoForcado && activeKit.precoForcadoValor > 0) {
+      return { price: activeKit.precoForcadoValor, loteDiscount: EMPTY_LOTE_DISCOUNT, loteIndex: null };
+    }
     const settingsSnap = await getDoc(doc(db, 'nightrun_settings', 'lotes'));
     const settings = settingsSnap.exists() ? settingsSnap.data() : {
       adulto: [{ max: 500, price: 11000 }, { max: 750, price: 12500 }, { max: 1000, price: 15000 }],
@@ -603,29 +674,109 @@ export default function PublicForm() {
     };
     const adultLots = Array.isArray(settings.adulto) && settings.adulto.length > 0 ? settings.adulto : [{ max: 1000, price: 11000, discount: EMPTY_LOTE_DISCOUNT }];
     const infantil = settings.infantil || { price: 8000, discount: EMPTY_LOTE_DISCOUNT };
+    if (!settings.infantil) settings.infantil = infantil;
 
     if (data.categoria === 'infantil') {
-      return { price: Number(infantil.price || 8000), loteDiscount: normalizeLoteDiscount(infantil.discount), loteIndex: null };
+      return { price: Number(infantil.price || 8000), loteDiscount: settings.infantil.discount || EMPTY_LOTE_DISCOUNT, loteIndex: null };
     }
 
     if (settings.mode === 'manual') {
       const manualIndex = Math.min(Math.max(Number(settings.manualIndex || 0), 0), adultLots.length - 1);
       const lote = adultLots[manualIndex] || adultLots[0];
-      return { price: Number(lote.price || 0), loteDiscount: normalizeLoteDiscount(lote.discount), loteIndex: manualIndex };
+      return { price: Number(lote.price || 0), loteDiscount: lote.discount || EMPTY_LOTE_DISCOUNT, loteIndex: manualIndex };
     }
 
     const countSnap = await getCountFromServer(collection(db, 'nightrun_registrations'));
     const count = countSnap.data().count;
     const loteIndex = adultLots.findIndex((lot: any) => count < lot.max);
     const currentIndex = loteIndex >= 0 ? loteIndex : adultLots.length - 1;
-    const currentLote = adultLots[currentIndex] || adultLots[0];
-    return { price: Number(currentLote.price || 0), loteDiscount: normalizeLoteDiscount(currentLote.discount), loteIndex: currentIndex };
+    const lote = adultLots[currentIndex] || adultLots[0];
+    return { price: Number(lote.price || 0), loteDiscount: lote.discount || EMPTY_LOTE_DISCOUNT, loteIndex: currentIndex };
+  };
+
+  const validateCouponForAmount = async (rawCode: string, amountInCents: number): Promise<AppliedCoupon> => {
+    const normalizedCode = normalizeCouponCode(rawCode);
+    if (!normalizedCode) throw new Error('Informe o codigo do cupom.');
+    const couponRef = doc(db, 'nightrun_discount_coupons', normalizedCode);
+    const couponSnap = await getDoc(couponRef);
+    if (!couponSnap.exists()) throw new Error('Cupom nao encontrado.');
+    const coupon = couponSnap.data();
+    const type: CouponDiscountType = coupon.type === 'fixed' ? 'fixed' : 'percent';
+    const maxUses = Number(coupon.maxUses || 0);
+    const usedCount = Number(coupon.usedCount || 0);
+    if (coupon.active === false) throw new Error('Este cupom esta inativo.');
+    if (maxUses <= 0 || usedCount >= maxUses) throw new Error('Este cupom nao possui usos disponiveis.');
+    const discount = calculateCouponDiscount(amountInCents, type, Number(coupon.value || 0));
+    if (discount.discountAmount <= 0) throw new Error('Este cupom nao gera desconto para esta inscricao.');
+    return {
+      id: couponSnap.id,
+      code: String(coupon.code || normalizedCode).toUpperCase(),
+      type,
+      value: Number(coupon.value || 0),
+      discountAmount: discount.discountAmount,
+      amountAfterDiscount: discount.amountAfterDiscount,
+    };
+  };
+
+  const handleApplyCoupon = async () => {
+    setCouponLoading(true);
+    setCouponFeedback('');
+    try {
+      const pricing = await calculateBaseAmount();
+      const discount = applyRegistrationDiscount(pricing, userAge, data.categoria === 'adulto' && data.servidorPublicoMunicipal, data.categoria === 'adulto' && data.pcd);
+      const coupon = await validateCouponForAmount(couponCode, discount.amount);
+      setAppliedCoupon(coupon);
+      setCouponCode(coupon.code);
+      setPricePreview(coupon.amountAfterDiscount);
+      setCouponFeedback(`Cupom aplicado: -${formatMoney(coupon.discountAmount)}.`);
+      showAlert('Cupom aplicado com sucesso.', 'success');
+    } catch (error: any) {
+      setAppliedCoupon(null);
+      setCouponFeedback(error.message || 'Nao foi possivel aplicar o cupom.');
+      showAlert(error.message || 'Nao foi possivel aplicar o cupom.', 'warning');
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const consumeCouponForAmount = async (rawCode: string, amountInCents: number): Promise<AppliedCoupon | null> => {
+    const normalizedCode = normalizeCouponCode(rawCode);
+    if (!normalizedCode) return null;
+    const couponRef = doc(db, 'nightrun_discount_coupons', normalizedCode);
+    return runTransaction(db, async transaction => {
+      const couponSnap = await transaction.get(couponRef);
+      if (!couponSnap.exists()) throw new Error('Cupom nao encontrado.');
+      const coupon = couponSnap.data();
+      const type: CouponDiscountType = coupon.type === 'fixed' ? 'fixed' : 'percent';
+      const maxUses = Number(coupon.maxUses || 0);
+      const usedCount = Number(coupon.usedCount || 0);
+      if (coupon.active === false) throw new Error('Este cupom esta inativo.');
+      if (maxUses <= 0 || usedCount >= maxUses) throw new Error('Este cupom nao possui usos disponiveis.');
+      const discount = calculateCouponDiscount(amountInCents, type, Number(coupon.value || 0));
+      if (discount.discountAmount <= 0) throw new Error('Este cupom nao gera desconto para esta inscricao.');
+      transaction.update(couponRef, {
+        usedCount: usedCount + 1,
+        updatedAt: serverTimestamp(),
+        lastUsedAt: serverTimestamp(),
+      });
+      return {
+        id: couponSnap.id,
+        code: String(coupon.code || normalizedCode).toUpperCase(),
+        type,
+        value: Number(coupon.value || 0),
+        discountAmount: discount.discountAmount,
+        amountAfterDiscount: discount.amountAfterDiscount,
+      };
+    });
   };
 
   const handleSubmit = async () => {
     console.log('[PublicForm] submit:start', { nome: data.nome, telefone: data.telefone, categoria: data.categoria, modalidadeId: data.modalidadeId, hasPhoto: Boolean(data.fotoUrl) });
     if (!firstStageValid) return showAlert('Revise os dados obrigatórios antes de continuar.', 'warning');
     if (!signatureValid) return showAlert('Leia e aceite o regulamento e assine para continuar.', 'warning');
+    if (couponCode.trim() && normalizeCouponCode(couponCode) !== appliedCoupon?.code) {
+      return showAlert('Clique em Aplicar para validar o cupom antes de confirmar a inscricao.', 'warning');
+    }
     setLoadingMessage('Processando sua inscrição...');
     setLoading(true);
     try {
@@ -635,10 +786,14 @@ export default function PublicForm() {
       const paymentProvider: PaymentProvider = selectedProvider === 'cora' ? 'cora' : 'asaas';
       const baseAmount = await calculateBaseAmount();
       const registrationDiscount = applyRegistrationDiscount(baseAmount, userAge, data.categoria === 'adulto' && data.servidorPublicoMunicipal, data.categoria === 'adulto' && data.pcd);
-      const registrationAmount = registrationDiscount.amount;
-      const paymentFee = PIX_PAYMENT_FEE_CENTS_BY_PROVIDER[paymentProvider];
+      const couponDiscount = appliedCoupon ? await consumeCouponForAmount(appliedCoupon.code, registrationDiscount.amount) : null;
+      const registrationAmount = couponDiscount?.amountAfterDiscount ?? registrationDiscount.amount;
+      // Inscrição gratuita: cupom (ou combinação de descontos) zerou o valor da inscrição.
+      // Nesse caso não geramos cobrança em nenhum provedor (Cora/Asaas) e não cobramos taxa de PIX.
+      const isFreeRegistration = registrationAmount <= 0;
+      const paymentFee = isFreeRegistration ? 0 : PIX_PAYMENT_FEE_CENTS_BY_PROVIDER[paymentProvider];
       const amount = registrationAmount + paymentFee;
-      console.log('[PublicForm] submit:amount', { amount, registrationAmount, paymentFee, originalAmount: registrationDiscount.originalAmount, registrationDiscount });
+      console.log('[PublicForm] submit:amount', { amount, registrationAmount, paymentFee, isFreeRegistration, originalAmount: registrationDiscount.originalAmount, registrationDiscount, couponDiscount });
 
       let paymentCustomerId = '';
       let paymentExternalId = '';
@@ -650,7 +805,9 @@ export default function PublicForm() {
       let pixQr = '';
       let pixPayload = '';
 
-      if (paymentProvider === 'cora') {
+      if (isFreeRegistration) {
+        console.log('[PublicForm] submit:free', { message: 'Inscrição gratuita - nenhuma cobrança criada.' });
+      } else if (paymentProvider === 'cora') {
         const paymentReference = crypto.randomUUID();
         const coraRes = await fetch(`${workerUrl}/cora/invoices/pix`, {
           method: 'POST',
@@ -724,7 +881,7 @@ export default function PublicForm() {
       if (data.fotoUrl) {
         try {
           console.log('[PublicForm] euVouCard:start', { fotoUrl: data.fotoUrl });
-          euVouCardUrl = await generateEuVouCard(data.fotoUrl, selectedModalidadeNome || selectedCategoria);
+          euVouCardUrl = await generateEuVouCard(data.fotoUrl, selectedModalidadeNome || selectedCategoria, userAge <= 12);
           console.log('[PublicForm] euVouCard:done', { euVouCardUrl });
         } catch (error) {
           console.error('Erro ao gerar card Eu Vou:', error);
@@ -733,12 +890,19 @@ export default function PublicForm() {
 
       const registrationData = {
         ...data,
+        kit: activeKit?.id || data.kit,
+        kitNome: activeKit?.nome || KITS[0]?.nome || '',
+        kitPrecoForcado: !!activeKit?.precoForcado,
+        kitPrecoForcadoValor: activeKit?.precoForcado ? activeKit.precoForcadoValor : null,
         responsavelNome: requiresResponsible ? data.responsavelNome.trim() : '',
         responsavelCpf: requiresResponsible ? data.responsavelCpf : '',
         servidorPublicoMunicipal: data.categoria === 'adulto' && data.servidorPublicoMunicipal,
         matriculaServidor: data.categoria === 'adulto' && data.servidorPublicoMunicipal ? data.matriculaServidor.trim() : '',
         pcd: data.categoria === 'adulto' && data.pcd,
-        paymentStatus: 'pendente',
+        paymentStatus: isFreeRegistration ? 'pago' : 'pendente',
+        gratuito: isFreeRegistration,
+        tipoInscricao: isFreeRegistration ? 'gratuita' : 'paga',
+        paymentConfirmedAt: isFreeRegistration ? serverTimestamp() : null,
         paymentProvider,
         paymentCustomerId,
         paymentExternalId,
@@ -767,6 +931,12 @@ export default function PublicForm() {
         descontoPcd: registrationDiscount.isPcd,
         descontoServidorPublicoMunicipal: registrationDiscount.isMunicipalServer,
         descontoAplicado: registrationDiscount.discountLabel,
+        couponId: couponDiscount?.id || '',
+        couponCode: couponDiscount?.code || '',
+        couponDiscountType: couponDiscount?.type || '',
+        couponDiscountValue: couponDiscount?.value || 0,
+        couponDiscountAmount: couponDiscount?.discountAmount || 0,
+        descontoCupom: Boolean(couponDiscount?.discountAmount),
         idadeNoCadastro: userAge,
         createdAt: serverTimestamp(),
       };
@@ -821,7 +991,7 @@ export default function PublicForm() {
         }
       }
 
-      navigate(`/inscricao/pagamento/${docRef.id}`);
+      navigate(isFreeRegistration ? `/inscricao/confirmada/${docRef.id}` : `/inscricao/pagamento/${docRef.id}`);
     } catch (error: any) {
       console.error('[PublicForm] submit:error', error);
       showAlert(error.message || 'Erro ao finalizar inscrição.', 'error');
@@ -1139,6 +1309,7 @@ export default function PublicForm() {
                     <div className="single-kit-photo-layout">
                       <div className="single-shirt-panel">
                         <div className="single-shirt-head"><div><label>Tamanho da camiseta *</label><strong>{selectedCamiseta?.label || 'Selecione o tamanho'}</strong></div></div>
+                        <p className="single-shirt-disclaimer">* A camiseta não faz parte deste kit. Coletamos o tamanho para o caso de disponibilizarmos camisetas para venda futuramente.</p>
                         <div className="size-table-container" onClick={() => setShowSizeTable(true)} style={{ marginBottom: 16, borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', cursor: 'zoom-in' }}>
                           <img src={sizeTableImage} alt="Tabela de tamanhos" style={{ width: '100%', display: 'block', height: 'auto' }} />
                           <div style={{ padding: 8, textAlign: 'center', fontSize: '0.7rem', color: '#6BFF2A', fontWeight: 600, background: 'rgba(0,0,0,0.3)' }}>CLIQUE PARA AMPLIAR</div>
@@ -1307,10 +1478,38 @@ export default function PublicForm() {
 
                 </div>
 
+                <div className="review-coupon-card">
+                  <div className="review-coupon-heading">
+                    <h4>Cupom de desconto</h4>
+                    <span>{appliedCoupon ? 'Aplicado' : 'Opcional'}</span>
+                  </div>
+                  <div className="review-coupon-row">
+                    <input
+                      type="text"
+                      value={couponCode}
+                      onChange={event => {
+                        setCouponCode(normalizeCouponCode(event.target.value));
+                        setAppliedCoupon(null);
+                        setCouponFeedback('');
+                      }}
+                      placeholder="DIGITE SEU CUPOM"
+                    />
+                    <button type="button" onClick={handleApplyCoupon} disabled={couponLoading || !couponCode.trim()}>
+                      {couponLoading ? 'Validando...' : 'Aplicar'}
+                    </button>
+                  </div>
+                  {(couponFeedback || appliedCoupon) && (
+                    <p className={appliedCoupon ? 'coupon-feedback success' : 'coupon-feedback'}>
+                      {couponFeedback || `Desconto de ${formatMoney(appliedCoupon?.discountAmount || 0)} aplicado.`}
+                    </p>
+                  )}
+                </div>
+
                 <div className="single-price-card-magistral">
                   <div className="price-label-side">
                     <span>Valor da Inscrição</span>
                     {discountPreviewText && <small className="discount-badge">{discountPreviewText}</small>}
+                    {appliedCoupon && <small className="discount-badge">Cupom {appliedCoupon.code}: -{formatMoney(appliedCoupon.discountAmount)}</small>}
                   </div>
                   <div className="price-value-side">
                     <strong>{pricePreview !== null ? formatMoney(pricePreview) : 'Calculando...'}</strong>

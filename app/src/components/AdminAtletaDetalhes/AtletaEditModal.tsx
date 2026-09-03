@@ -1,6 +1,6 @@
 import React from 'react';
 import { FileEdit } from 'lucide-react';
-import { formatCamisetaLabel } from '../../utils/camisetaUtils';
+import { formatCamisetaLabel, getCamisetaShortLabel, getCamisetaType } from '../../utils/camisetaUtils';
 
 interface AtletaEditModalProps {
   show: boolean;
@@ -22,8 +22,8 @@ export const AtletaEditModal: React.FC<AtletaEditModalProps> = ({
   if (!show) return null;
 
   const sizeOrder = ['PP', 'P', 'M', 'G', 'GG', 'EXGG', 'XG', '10', '12', '2', '4', '6', '8'];
-  const sizeShort = (item: any) => formatCamisetaLabel(item.id, item).replace(/^Baby Look\s*-\s*/i, '').replace(/^Padrao\s*-\s*/i, '');
-  const sizeType = (item: any) => /^BL[_-]/i.test(item.id) || /baby\s*look/i.test(String(item.tipo || item.label || '')) ? 'Baby Look' : 'Padrao';
+  const sizeShort = (item: any) => getCamisetaShortLabel(item.id, item);
+  const sizeType = (item: any) => getCamisetaType(item.id, item);
   const sortSizes = (a: any, b: any) => {
     const orderA = sizeOrder.indexOf(sizeShort(a));
     const orderB = sizeOrder.indexOf(sizeShort(b));

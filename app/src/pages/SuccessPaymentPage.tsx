@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, onSnapshot, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { PartyPopper, MessageSquare, Home } from 'lucide-react';
-import { KITS, CATEGORIAS } from '../types';
+import { CATEGORIAS } from '../types';
 import LoadingModal from '../components/LoadingModal';
 import WinnerExperience from '../components/WinnerExperience';
 import { LogoCombo } from '../components/LogoCombo';
@@ -72,7 +72,6 @@ export default function SuccessPaymentPage() {
   if (loading) return <LoadingModal isOpen={true} />;
   if (!data) return null;
 
-  const kit = KITS.find(k => k.id === data.kit);
   const cat = CATEGORIAS.find(c => c.id === data.categoria);
   const welcomeMessage = encodeURIComponent(`Pagamento realizado!\n\nOlá, equipe de boas-vindas. Minha inscrição na MCU Night Run 2026 foi confirmada.\n\nNome: ${data.nome || ''}\nID da inscrição: ${registrationId || ''}`);
   const welcomeWhatsAppUrl = `https://wa.me/5533998366544?text=${welcomeMessage}`;

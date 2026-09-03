@@ -22,3 +22,6 @@ worker/.env
 
 # Logs
 *.log
+
+# Claude Code local-only settings (machine-specific permissions)
+.claude/settings.local.json

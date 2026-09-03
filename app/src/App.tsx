@@ -16,7 +16,11 @@ import AdminExport from './pages/AdminExport';
 import AdminCamisetas from './pages/AdminCamisetas';
 import AdminUsuarios from './pages/AdminUsuarios';
 import AdminSorteios from './pages/AdminSorteios';
+import AdminSorteioDetalhe from './pages/AdminSorteioDetalhe';
+import SorteioPublico from './pages/SorteioPublico';
+import SorteioOperador from './pages/SorteioOperador';
 import AdminLotes from './pages/AdminLotes';
+import AdminCuponsDesconto from './pages/AdminCuponsDesconto';
 import AdminLogin from './pages/AdminLogin';
 import AdminLayout from './layouts/AdminLayout';
 import AtletaLayout from './layouts/AtletaLayout';
@@ -35,9 +39,13 @@ import AdminCobrancaPendentes from './pages/AdminCobrancaPendentes';
 import AdminDev from './pages/AdminDev';
 import AdminAtletaDetalhes from './pages/AdminAtletaDetalhes';
 import AdminModalidades from './pages/AdminModalidades';
+import AdminEquipes from './pages/AdminEquipes';
 import AdminPresenca from './pages/AdminPresenca';
 import AdminCardEuVou from './pages/AdminCardEuVou';
 import AdminContaHistorico from './pages/AdminContaHistorico';
+import AdminFaturas from './pages/AdminFaturas';
+import AdminFinanceiroRelatorios from './pages/AdminFinanceiroRelatorios';
+import AdminFinanceiroDefinicoes from './pages/AdminFinanceiroDefinicoes';
 import './App.css';
 
 const Placeholder = ({ title }: { title: string }) => (
@@ -60,6 +68,8 @@ function App() {
               <Route path="/inscricao" element={<ClosedRegistrations />} />
               <Route path="/inscricao/pagamento/:registrationId" element={<PaymentPage />} />
               <Route path="/inscricao/confirmada/:registrationId" element={<SuccessPaymentPage />} />
+              <Route path="/sorteio/:sorteioId" element={<SorteioPublico />} />
+              <Route path="/sorteio/:sorteioId/operar" element={<SorteioOperador />} />
 
               {/* Shared Login */}
               <Route path="/admin/login" element={<AtletaLogin />} />
@@ -73,7 +83,11 @@ function App() {
                 <Route path="inscritos/:id" element={<AdminAtletaDetalhes />} />
                 <Route path="inscritos/novo" element={<Placeholder title="NOVA INSCRIÇÃO" />} />
                 <Route path="modalidades" element={<AdminModalidades />} />
+                <Route path="equipes" element={<AdminEquipes />} />
                 <Route path="financeiro" element={<AdminFinanceiro />} />
+                <Route path="financeiro/faturas" element={<AdminFaturas />} />
+                <Route path="financeiro/relatorios" element={<AdminFinanceiroRelatorios />} />
+                <Route path="financeiro/definicoes" element={<AdminFinanceiroDefinicoes />} />
                 <Route path="financeiro/:provider" element={<AdminContaHistorico />} />
                 <Route path="verificar-pagamentos" element={<AdminVerificarPagamentos />} />
                 <Route path="cobranca-pendentes" element={<AdminCobrancaPendentes />} />
@@ -89,7 +103,9 @@ function App() {
                 <Route path="camisetas" element={<AdminCamisetas />} />
                 <Route path="usuarios" element={<AdminUsuarios />} />
                 <Route path="sorteios" element={<AdminSorteios />} />
+                <Route path="sorteios/:sorteioId" element={<AdminSorteioDetalhe />} />
                 <Route path="lotes" element={<AdminLotes />} />
+                <Route path="cupons" element={<AdminCuponsDesconto />} />
                 <Route path="integracoes" element={<AdminIntegracoes />} />
                 <Route path="modo-manutencao" element={<AdminModoManutencao />} />
                 <Route path="configuracoes" element={<AdminSettings />} />

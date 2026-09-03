@@ -3,6 +3,79 @@
  * Proxy para Asaas, Evolution API, R2 Storage e Fila de Mensagens
  */
 
+import { Resvg, initWasm } from "@resvg/resvg-wasm";
+import RESVG_WASM_MODULE from "@resvg/resvg-wasm/index_bg.wasm";
+import MONTSERRAT_TTF from "./assets/montserrat-800.ttf";
+
+let resvgWasmReady = null;
+async function ensureResvgWasm() {
+  if (!resvgWasmReady) {
+    resvgWasmReady = initWasm(RESVG_WASM_MODULE).catch(error => {
+      // "Already initialized" acontece quando o isolate ja rodou initWasm antes (reuso de worker).
+      if (!String(error?.message || "").includes("Already initialized")) throw error;
+    });
+  }
+  return resvgWasmReady;
+}
+
+const OPERATIONAL_LOGO_URL = "https://night-run-uba.web.app/LOGO%20NIGHT%20RUN%20SEM%20FUNDO%20%28em%20amarelo%29.png";
+
+// Busca o logo em base64, cacheado no KV (o arquivo nao muda com frequencia).
+async function getOperationalLogoBase64(env) {
+  const cacheKey = "opsummary:logo:base64:v1";
+  if (env.NIGHTRUN_STORAGE) {
+    const cached = await env.NIGHTRUN_STORAGE.get(cacheKey);
+    if (cached) return cached;
+  }
+  const res = await fetch(OPERATIONAL_LOGO_URL);
+  if (!res.ok) throw new Error("Falha ao baixar o logo para o banner.");
+  const buf = await res.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
+  const base64 = btoa(bin);
+  if (env.NIGHTRUN_STORAGE) {
+    await env.NIGHTRUN_STORAGE.put(cacheKey, base64, { expirationTtl: 30 * 86400 });
+  }
+  return base64;
+}
+
+const xmlEscape = (value) => String(value ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+// Gera o banner (logo + titulo + data DD/MM real) como PNG, renderizado no proprio worker.
+async function generateOperationalBannerPng(env, shortDateLabel) {
+  await ensureResvgWasm();
+  const logoBase64 = await getOperationalLogoBase64(env);
+  const W = 700, H = 900;
+  const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#071A45"/>
+        <stop offset="100%" stop-color="#0b2560"/>
+      </linearGradient>
+    </defs>
+    <rect width="${W}" height="${H}" rx="28" fill="url(#bg)"/>
+    <rect x="6" y="6" width="${W - 12}" height="${H - 12}" rx="24" fill="none" stroke="#6BFF2A" stroke-opacity="0.45" stroke-width="4"/>
+    <image x="${W / 2 - 150}" y="70" width="300" height="300" href="data:image/png;base64,${logoBase64}" preserveAspectRatio="xMidYMid meet"/>
+    <text x="${W / 2}" y="430" font-size="26" fill="#6BFF2A" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="2">MCU NIGHT RUN 2026</text>
+    <text x="${W / 2}" y="500" font-size="46" fill="#ffffff" text-anchor="middle" font-family="Montserrat" font-weight="800">RESUMO OPERACIONAL</text>
+    <line x1="90" y1="560" x2="${W - 90}" y2="560" stroke="#ffffff" stroke-opacity="0.15" stroke-width="2"/>
+    <text x="${W / 2}" y="590" font-size="20" fill="#94a3b8" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="3">REFERENTE A</text>
+    <text x="${W / 2}" y="760" font-size="150" fill="#6BFF2A" text-anchor="middle" font-family="Montserrat" font-weight="800">${xmlEscape(shortDateLabel)}</text>
+  </svg>`;
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: "width", value: W },
+    font: { fontBuffers: [new Uint8Array(MONTSERRAT_TTF)], loadSystemFonts: false, defaultFontFamily: "Montserrat" },
+  });
+  return resvg.render().asPng();
+}
+
+function pngToDataUri(pngBytes) {
+  let bin = "";
+  for (let i = 0; i < pngBytes.byteLength; i++) bin += String.fromCharCode(pngBytes[i]);
+  return `data:image/png;base64,${btoa(bin)}`;
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -246,15 +319,30 @@ export default {
           }
 
           const invoiceId = extractCoraInvoiceId(body, request.headers);
-          const status = extractCoraPaymentStatus(body, request.headers);
-          console.log("[Cora Webhook] Received", { eventType, resourceId, invoiceId, status, hasBody: Boolean(bodyText) });
+          const bodyStatus = extractCoraPaymentStatus(body, request.headers);
+          console.log("[Cora Webhook] Received", { eventType, resourceId, invoiceId, bodyStatus, hasBody: Boolean(bodyText) });
+
+          // Nao confia so no status embutido no corpo do webhook pra decidir "pago" - o formato
+          // exato que a Cora manda pode variar/mudar e um campo nao reconhecido faria o
+          // pagamento ficar preso pendente pra sempre, silenciosamente. Em vez disso, qualquer
+          // evento relacionado a fatura reconsulta o status real direto na API da Cora (fonte
+          // da verdade) antes de decidir confirmar ou nao.
+          let status = bodyStatus;
+          if (invoiceId && bodyStatus !== "paid") {
+            const liveCheck = await checkCoraInvoiceStatus(env, invoiceId).catch(error => {
+              console.error("[Cora Webhook] Live status check failed", { invoiceId, error: error.message });
+              return null;
+            });
+            if (liveCheck?.paid) status = "paid";
+          }
+
           if (invoiceId && status === "paid") {
             const result = await confirmRegistrationPayment(env, invoiceId, ctx, {
               searchFields: ["coraInvoiceId", "coraInvoiceCode", "paymentExternalId"]
             });
             console.log("[Cora Webhook] Confirmation result", { invoiceId, result });
           }
-          return json({ received: true, invoiceId, status });
+          return json({ received: true, invoiceId, status, bodyStatus });
         }
       }
 
@@ -279,10 +367,35 @@ export default {
         if (!registrationIds.length) return json({ success: false, error: "Nenhuma inscricao informada." }, 400);
         const results = [];
         for (const registrationId of registrationIds.slice(0, 300)) {
-          const result = await confirmRegistrationPaymentById(env, registrationId, ctx, { forceNotify: true });
+          const result = await confirmRegistrationPaymentById(env, registrationId, ctx, { forceNotify: true, markGhost: true });
           results.push({ registrationId, ...result });
         }
         return json({ success: true, count: results.length, results });
+      }
+
+      // Status da ultima rodada da reconciliacao automatica (roda sozinha a cada 5 min via
+      // cron) - o painel usa isso pra mostrar quando rodou pela ultima vez e o que corrigiu.
+      if (path === "/payments/auto-reconcile-status" && request.method === "GET") {
+        const raw = env.NIGHTRUN_STORAGE ? await env.NIGHTRUN_STORAGE.get("payments:auto-reconcile:last-run") : null;
+        return json({ success: true, lastRun: raw ? JSON.parse(raw) : null }, 200);
+      }
+
+      // Dispara a reconciliacao automatica na hora (o painel usa isso no botao "verificar
+      // agora", sem precisar esperar o proximo tick do cron).
+      if (path === "/payments/auto-reconcile-run" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const windowHours = Math.min(Math.max(Number(body.windowHours || 6), 1), 72);
+        const result = await autoReconcilePendingPayments(env, ctx, { windowHours });
+        return json({ success: result.ok !== false, ...result }, 200);
+      }
+
+      // Corrige inscricoes pagas no cartao (Asaas) cujos campos de provedor/metodo ficaram
+      // desatualizados (ex: cliente comecou no Pix e trocou pra cartao) - sem isso, futuras
+      // verificacoes/relatorios continuam olhando pro ID de pagamento errado.
+      if (path === "/payments/fix-credit-card-links" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const result = await fixCreditCardProviderRecords(env, { dryRun: body.dryRun !== false, limit: body.limit });
+        return json(result, 200);
       }
 
       if (path === "/bank-balances" && request.method === "GET") {
@@ -318,12 +431,73 @@ export default {
         return json(result, 200);
       }
 
+      if (path === "/bank-invoices" && request.method === "GET") {
+        const provider = url.searchParams.get("provider");
+        if (provider !== "asaas" && provider !== "cora") {
+          return json({ ok: false, error: "Banco invalido. Informe asaas ou cora." }, 400);
+        }
+        const result = provider === "asaas"
+          ? await getAsaasInvoices(env)
+          : await getCoraInvoices(env);
+        return json(result, result.ok ? 200 : (result.status || 502));
+      }
+
+      if (path === "/bank-invoices/asaas/reconcile-paid" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const result = await reconcilePaidAsaasInvoices(env, { apply: body.apply === true });
+        return json(result, result.ok ? 200 : (result.status || 502));
+      }
+
+      if (path === "/bank-invoices/asaas/reconcile-system-pending" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const result = await reconcileAsaasPaidSystemPending(env, {
+          confirm: body.confirm === true,
+          registrationIds: Array.isArray(body.registrationIds) ? body.registrationIds.map(String).filter(Boolean) : []
+        }, ctx);
+        return json(result, result.ok ? 200 : (result.status || 502));
+      }
+
+      if (path === "/bank-invoices/asaas/delete-bulk" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
+        if (!ids.length) return json({ ok: false, error: "Nenhuma fatura informada." }, 400);
+        const result = await deleteAsaasInvoicesBulk(env, ids);
+        return json(result, result.ok ? 200 : 502);
+      }
+
+      if (path === "/bank-invoices/asaas/cleanup-registrations" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const result = await cleanupPendingAsaasRegistrations(env, {
+          apply: body.apply === true,
+          registrationIds: Array.isArray(body.registrationIds) ? body.registrationIds.map(String).filter(Boolean) : []
+        });
+        return json(result, result.ok ? 200 : (result.status || 502));
+      }
+
+      const bankInvoiceMatch = path.match(/^\/bank-invoices\/(asaas|cora)\/([^/]+)$/);
+      if (bankInvoiceMatch && request.method === "DELETE") {
+        const provider = bankInvoiceMatch[1];
+        const invoiceId = decodeURIComponent(bankInvoiceMatch[2]);
+        const result = provider === "asaas"
+          ? await deleteAsaasInvoice(env, invoiceId)
+          : await deleteCoraInvoice(env, invoiceId);
+        return json(result, result.ok ? 200 : (result.status || 502));
+      }
+
       const manualConfirmMatch = path.match(/^\/registrations\/([^/]+)\/confirm-payment$/);
       if (manualConfirmMatch && request.method === "POST") {
         const registrationId = decodeURIComponent(manualConfirmMatch[1]);
         const result = await confirmRegistrationPaymentById(env, registrationId, ctx, { forceNotify: true });
         if (!result.found) return json(result, 404);
         return json(result, 200);
+      }
+
+      const sendCardMatch = path.match(/^\/registrations\/([^/]+)\/send-payment-card$/);
+      if (sendCardMatch && request.method === "POST") {
+        const registrationId = decodeURIComponent(sendCardMatch[1]);
+        const result = await sendRegistrationPaymentCardById(env, registrationId, ctx, { force: true });
+        if (!result.found) return json(result, 404);
+        return json(result, result.success ? 200 : 422);
       }
 
       const checkPaymentMatch = path.match(/^\/registrations\/([^/]+)\/check-payment$/);
@@ -344,7 +518,8 @@ export default {
         const alreadyPaid = fields.paymentStatus?.stringValue === "pago";
         
         if (alreadyPaid) {
-          return json({ paid: true, alreadyPaid: true, status: "paid" });
+          const confirmResult = await confirmRegistrationDocument(env, document, ctx, { manual: false });
+          return json({ paid: true, alreadyPaid: true, status: "paid", confirmResult });
         }
         
         const registrationPaymentChecks = buildRegistrationPaymentChecks({
@@ -432,6 +607,24 @@ export default {
         return new Response(obj.body, { headers });
       }
 
+      // ==================== WHATSAPP HUB (proxy) ====================
+      // A chave do hub fica so aqui no servidor - o admin nunca chama o hub direto do navegador.
+      // Usa Service Binding (nao fetch por URL publica - Workers nao podem se chamar via
+      // *.workers.dev entre si, a Cloudflare bloqueia isso com o erro 1042).
+      if (path === "/hub/messages" && request.method === "POST") {
+        if (!env.WHATSAPP_HUB || !env.WHATSAPP_HUB_API_KEY) {
+          return json({ error: "Whatsapp Hub nao configurado." }, 500);
+        }
+        const body = await request.json().catch(() => ({}));
+        const hubRes = await env.WHATSAPP_HUB.fetch("https://whatsapp-hub.internal/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.WHATSAPP_HUB_API_KEY}` },
+          body: JSON.stringify(body)
+        });
+        const hubBody = await hubRes.json().catch(() => ({}));
+        return json(hubBody, hubRes.status);
+      }
+
       // ==================== QUEUE ====================
       if (path === "/queue/enqueue" && request.method === "POST") {
         const { messages } = await request.json();
@@ -446,6 +639,7 @@ export default {
         for (let i = 0; i < writes.length; i += 25) {
           await Promise.all(writes.slice(i, i + 25));
         }
+        await markQueueHasPending(env);
         ctx?.waitUntil(processQueue(env));
         return json({ success: true, count: routedMessages.length, batchId });
       }
@@ -471,9 +665,13 @@ export default {
       }
 
       if (path === "/queue/clear" && request.method === "POST") {
-        const list = await env.NIGHTRUN_STORAGE.list({ prefix: "mq:pending:" });
-        for (const key of list.keys) await env.NIGHTRUN_STORAGE.delete(key.name);
-        return json({ success: true });
+        // Limitado por chamada (rapido e sem travar); o cliente repete ate done=true.
+        const list = await env.NIGHTRUN_STORAGE.list({ prefix: "mq:pending:", limit: 200 });
+        const dels = list.keys.map(k => env.NIGHTRUN_STORAGE.delete(k.name));
+        for (let i = 0; i < dels.length; i += 50) {
+          await Promise.all(dels.slice(i, i + 50));
+        }
+        return json({ success: true, cleared: list.keys.length, done: list.list_complete === true });
       }
 
       if (path === "/queue/toggle-pause" && request.method === "POST") {
@@ -486,6 +684,43 @@ export default {
       if (path === "/queue/process" && request.method === "POST") {
         const result = await processQueue(env);
         return json({ success: true, message: "Queue processed", ...result });
+      }
+
+      // Preview em texto do resumo operacional para uma data (default: dia anterior), sem enviar.
+      if (path === "/operational-summary/preview" && request.method === "GET") {
+        const ctxDay = brDayContext(Date.now());
+        const dateStr = url.searchParams.get("date") || ctxDay.yesterdayStr;
+        const range = brRangeForDate(dateStr);
+        const report = await buildOperationalReport(env, range, ctxDay.todayStr);
+        return json({ success: true, summary: report.summary, totalConfirmadas: report.totalConfirmadas, yesterdayLabel: range.label, preview: report.text });
+      }
+
+      // Retorna o PNG do banner (logo + data real) pronto, para o admin conferir antes de enviar.
+      if (path === "/operational-summary/banner-preview" && request.method === "GET") {
+        const ctxDay = brDayContext(Date.now());
+        const dateStr = url.searchParams.get("date") || ctxDay.yesterdayStr;
+        const range = brRangeForDate(dateStr);
+        try {
+          const png = await generateOperationalBannerPng(env, range.shortLabel);
+          return new Response(png, { headers: { ...corsHeaders, "Content-Type": "image/png", "Cache-Control": "no-store" } });
+        } catch (error) {
+          return json({ error: error.message || "Falha ao gerar o banner." }, 500);
+        }
+      }
+
+      // Envia o resumo do DIA ANTERIOR agora (teste), ignorando horario e trava de "ja enviado".
+      if (path === "/operational-summary/send-now" && request.method === "POST") {
+        const result = await runOperationalSummary(env, { force: true });
+        return json({ success: Boolean(result.sent), ...result });
+      }
+
+      // Envio manual para uma data escolhida (hoje ou qualquer data passada).
+      if (path === "/operational-summary/send-manual" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const dateStr = String(body.date || "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return json({ error: "Informe uma data valida (AAAA-MM-DD)." }, 400);
+        const result = await runManualOperationalSummary(env, dateStr);
+        return json({ success: Boolean(result.sent), ...result });
       }
 
       if (path === "/pending-charges/send" && request.method === "POST") {
@@ -641,6 +876,14 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil(keepWhatsAppAlive(env));
+    ctx.waitUntil(maybeSnapshotBalances(env).catch(error => console.error("[OpSummary] balance snapshot failed", error)));
+    ctx.waitUntil(runOperationalSummary(env).catch(error => console.error("[OpSummary] scheduled failed", error)));
+    // A cada 5 minutos (nao todo tick de 1 min, pra nao estourar limite de API do Cora/Asaas):
+    // confirma sozinho qualquer pagamento pendente que ja esteja pago no banco - rede de
+    // seguranca contra webhook perdido/atrasado ou troca de forma de pagamento no checkout.
+    if (new Date().getMinutes() % 5 === 0) {
+      ctx.waitUntil(autoReconcilePendingPayments(env, ctx).catch(error => console.error("[Auto Reconcile] scheduled failed", error)));
+    }
     await processQueue(env);
   }
 };
@@ -683,6 +926,12 @@ function firestoreValueToJs(value) {
   return undefined;
 }
 
+function firestoreDocumentFieldsToJs(fields = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(fields || {})) out[key] = firestoreValueToJs(value);
+  return out;
+}
+
 async function getActiveWhatsAppInstances(env) {
   const fallback = [{ instanceName: getDefaultInstanceName(env), label: "Principal", active: true }];
   if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_API_KEY) return fallback;
@@ -708,6 +957,42 @@ async function getActiveWhatsAppInstances(env) {
     return active.length ? active : fallback;
   } catch (error) {
     console.error("[WhatsApp Instances] Failed to load", error);
+    return fallback;
+  }
+}
+
+async function getPaymentConfirmationWhatsAppConfig(env) {
+  const fallback = { instanceName: getDefaultInstanceName(env), adminPhone: "" };
+  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_API_KEY) return fallback;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/system_settings/nightrun_whatsapp?key=${env.FIREBASE_API_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) return fallback;
+    const data = await res.json();
+    return {
+      instanceName: firestoreString(data.fields?.instanceName) || fallback.instanceName,
+      adminPhone: formatPhoneForWhatsApp(firestoreString(data.fields?.registrationNoticePhone))
+    };
+  } catch (error) {
+    console.error("[Payment Confirm] Failed to load WhatsApp config", error);
+    return fallback;
+  }
+}
+
+async function getPaymentMethodsSettings(env) {
+  const fallback = { pix: true, cartao: true };
+  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_API_KEY) return fallback;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_settings/payment_methods?key=${env.FIREBASE_API_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) return fallback;
+    const data = await res.json();
+    return {
+      pix: data.fields?.pix?.booleanValue !== false,
+      cartao: data.fields?.cartao?.booleanValue !== false,
+    };
+  } catch (error) {
+    console.error("[Payment Methods] Failed to load settings", error);
     return fallback;
   }
 }
@@ -816,6 +1101,7 @@ async function enqueuePendingCharges(env, options = {}) {
       return env.NIGHTRUN_STORAGE.put(key, JSON.stringify({ ...message, enqueuedAt: new Date().toISOString() }));
     }));
   }
+  await markQueueHasPending(env);
 
   return { success: true, count: routedMessages.length, totalPending: pending.length, batchId };
 }
@@ -852,8 +1138,21 @@ function getCoraFetcher(env) {
     : { fetch };
 }
 
+// Cacheia o token de acesso da Cora no KV entre chamadas - ANTES desta correção, toda
+// checagem de pagamento, criação de fatura, consulta de saldo etc pedia um token NOVO na Cora
+// a cada chamada, sem reaproveitar nada. Uma unica auditoria varrendo ~150 inscrições
+// pendentes gerava ~150 pedidos de token em poucos segundos, estourando o limite de taxa da
+// Cora pra esse endpoint - e como a autenticação falhava, a checagem de pagamento também
+// falhava silenciosamente ("bankError: Falha ao autenticar na Cora"), deixando pagamentos já
+// aprovados presos como "pendente" no sistema por horas até alguém verificar manualmente.
 async function getCoraAccessToken(env) {
   if (!env.CORA_CLIENT_ID) throw new Error("CORA_CLIENT_ID nao configurado.");
+
+  if (env.NIGHTRUN_STORAGE) {
+    const cached = await env.NIGHTRUN_STORAGE.get("cora:access-token");
+    if (cached) return cached;
+  }
+
   const baseUrl = getCoraBaseUrl(env);
   const fetcher = getCoraFetcher(env);
   const isDirect = (env.CORA_AUTH_MODE || "direct") === "direct";
@@ -873,6 +1172,16 @@ async function getCoraAccessToken(env) {
   if (!res.ok || !data.access_token) {
     throw new Error(data.message || data.error_description || data.error || "Falha ao autenticar na Cora.");
   }
+
+  if (env.NIGHTRUN_STORAGE) {
+    // TTL do KV precisa ser >=60s. Usa o expires_in que a Cora informar com uma margem de
+    // seguranca de 30s; se a Cora nao informar expires_in, usa 5 minutos por padrao (bem
+    // conservador - tokens OAuth client_credentials normalmente duram bem mais que isso).
+    const expiresIn = Number(data.expires_in || 0);
+    const ttl = Math.max(60, expiresIn > 60 ? expiresIn - 30 : 300);
+    await env.NIGHTRUN_STORAGE.put("cora:access-token", data.access_token, { expirationTtl: ttl });
+  }
+
   return data.access_token;
 }
 
@@ -1024,7 +1333,11 @@ function transactionTypeLabel(type) {
 
 function normalizeBankDate(value) {
   if (!value) return new Date().toISOString();
-  const date = new Date(value);
+  // A Cora manda createdAt tipo "2026-08-17T22:45:54+00" (offset sem minutos) - o Date()
+  // do V8 recusa esse formato e vira "Invalid Date", fazendo a data cair silenciosamente
+  // pra "agora". Completa o offset com ":00" antes de parsear.
+  const normalized = typeof value === "string" ? value.replace(/([+-]\d{2})$/, "$1:00") : value;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
 }
 
@@ -1032,16 +1345,27 @@ function normalizeAsaasMovement(item) {
   const rawValue = readNestedValue(item, ["value", "amount", "netValue", "balance", "feeValue"]);
   const valueNumber = Number(rawValue || 0);
   const typeText = String(item.type || item.transactionType || item.operationType || item.description || "").toUpperCase();
-  const isDebit = valueNumber < 0 || /DEBIT|FEE|TAX|TARIFA|SAQUE|TRANSFER|PAYMENT|ANTICIPATION_DEBIT|CHARGEBACK|REFUND/.test(typeText);
+  // O campo "value" do extrato do Asaas ja vem com sinal (positivo = entrada, negativo = saida) -
+  // esse sinal e a fonte de verdade. So cai no regex de texto quando o valor vier zerado/ausente,
+  // porque um regex generico (ex: "PAYMENT") classificava PAYMENT_RECEIVED (entrada) como saida.
+  const isDebit = valueNumber !== 0
+    ? valueNumber < 0
+    : /DEBIT|FEE|TAX|TARIFA|SAQUE|TRANSFER|ANTICIPATION_DEBIT|CHARGEBACK|REFUND/.test(typeText);
   const cents = Math.abs(normalizeMoneyToCents(valueNumber));
   const typeLabel = transactionTypeLabel(item.type || item.transactionType || item.operationType);
   const description = cleanText(item.description || item.title || item.payment?.description || item.paymentDescription);
-  const payer = cleanText(item.customer?.name || item.client?.name || item.payer?.name || item.transfer?.recipientName);
+  // O extrato de financialTransactions do Asaas nao devolve o objeto do cliente/pagador -
+  // so ha um texto solto tipo "Cobranca recebida - fatura nr. 860839104 Fulano da Silva".
+  // Quando nao ha campo estruturado de pagador, extrai o nome do fim dessa descricao.
+  const payerFromDescriptionMatch = /fatura\s+nr\.?\s*\d+\s+(.+)$/i.exec(description);
+  const payerFromDescription = payerFromDescriptionMatch ? cleanText(payerFromDescriptionMatch[1]) : "";
+  const payer = cleanText(item.customer?.name || item.client?.name || item.payer?.name || item.transfer?.recipientName) || payerFromDescription;
   const title = description || typeLabel || (isDebit ? "Saída Asaas" : "Entrada Asaas");
+  const paymentId = cleanText(item.paymentId || item.payment || item.transferId || item.invoiceId || item.object);
   const detailParts = [
     typeLabel && typeLabel !== title ? typeLabel : "",
     payer,
-    cleanText(item.paymentId || item.payment || item.transferId || item.invoiceId || item.object)
+    paymentId
   ].filter(Boolean);
   return {
     id: String(item.id || item.transactionId || item.object || `${item.date || item.transactionDate || ""}-${rawValue}-${item.description || typeText}`),
@@ -1051,6 +1375,8 @@ function normalizeAsaasMovement(item) {
     amount: cents,
     title,
     description: detailParts.join(" • ") || "Movimentação real do extrato Asaas",
+    paymentId,
+    payerName: payer,
     raw: item
   };
 }
@@ -1068,6 +1394,10 @@ function normalizeCoraMovement(item, forcedType) {
   const categoryMain = cleanText(transaction.category?.main || item.category?.main || item.category);
   const categorySub = cleanText(transaction.category?.sub || item.subcategory);
   const title = transactionDescription || transactionLabel || (isDebit ? "Saída Cora" : "Entrada Cora");
+  const chargeId = cleanText(readNestedValue(item, [
+    "transaction.invoice.id", "transaction.invoice.code", "transaction.invoiceId", "transaction.invoiceCode",
+    "invoice.id", "invoice.code", "invoiceId", "invoiceCode", "transaction.entryId", "entryId"
+  ]));
   const detailParts = [
     transactionLabel && transactionLabel !== title ? transactionLabel : "",
     counterPartyName,
@@ -1081,55 +1411,80 @@ function normalizeCoraMovement(item, forcedType) {
     amount: cents,
     title,
     description: detailParts.join(" • ") || "Movimentação real do extrato Cora",
+    chargeId,
+    counterPartyName,
+    payerName: counterPartyName,
     raw: item
   };
 }
 
 async function getAsaasMovements(env, { start, end }) {
-  const requestUrl = new URL(`${env.ASAAS_BASE_URL}/financialTransactions`);
-  requestUrl.searchParams.set("limit", "100");
-  requestUrl.searchParams.set("offset", "0");
-  requestUrl.searchParams.set("startDate", start);
-  requestUrl.searchParams.set("finishDate", end);
-  requestUrl.searchParams.set("order", "desc");
+  const limit = 100;
+  let offset = 0;
+  const rawItems = [];
+  let lastData = {};
+  for (let page = 0; page < 100; page++) {
+    const requestUrl = new URL(`${env.ASAAS_BASE_URL}/financialTransactions`);
+    requestUrl.searchParams.set("limit", String(limit));
+    requestUrl.searchParams.set("offset", String(offset));
+    requestUrl.searchParams.set("startDate", start);
+    requestUrl.searchParams.set("finishDate", end);
+    requestUrl.searchParams.set("order", "desc");
 
-  const res = await fetch(requestUrl.toString(), {
-    headers: { "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0", "accept": "application/json" }
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) return { ok: false, status: res.status, error: data.errors?.[0]?.description || data.message || data.error || "Falha ao consultar extrato Asaas.", items: [], raw: data };
-  const items = collectListItems(data).map(normalizeAsaasMovement).filter(item => item.amount > 0);
+    const res = await fetch(requestUrl.toString(), {
+      headers: { "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0", "accept": "application/json" }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, status: res.status, error: data.errors?.[0]?.description || data.message || data.error || "Falha ao consultar extrato Asaas.", items: [], raw: data };
+    lastData = data;
+    const pageItems = collectListItems(data);
+    rawItems.push(...pageItems);
+    if (!data.hasMore || pageItems.length === 0) break;
+    offset += limit;
+  }
+  const items = rawItems.map(normalizeAsaasMovement).filter(item => item.amount > 0);
   return {
     ok: true,
-    status: res.status,
+    status: 200,
     items,
     entradas: items.filter(item => item.type === "entrada"),
     saidas: items.filter(item => item.type === "saida"),
-    raw: data
+    raw: lastData
   };
 }
 
-async function getCoraStatementPage(env, { start, end, type, page = 1 }) {
+async function getCoraStatementPage(env, { start, end, type }) {
   const accessToken = await getCoraAccessToken(env);
   const baseUrl = getCoraBaseUrl(env);
   const fetcher = getCoraFetcher(env);
-  const requestUrl = new URL(`${baseUrl}/bank-statement/statement`);
-  requestUrl.searchParams.set("start", start);
-  requestUrl.searchParams.set("end", end);
-  requestUrl.searchParams.set("type", type);
-  requestUrl.searchParams.set("page", String(page));
-  requestUrl.searchParams.set("perPage", "100");
-  requestUrl.searchParams.set("aggr", "false");
+  const perPage = 100;
+  const items = [];
+  let lastData = {};
+  for (let page = 1; page <= 100; page++) {
+    const requestUrl = new URL(`${baseUrl}/bank-statement/statement`);
+    requestUrl.searchParams.set("start", start);
+    requestUrl.searchParams.set("end", end);
+    requestUrl.searchParams.set("type", type);
+    requestUrl.searchParams.set("page", String(page));
+    requestUrl.searchParams.set("perPage", String(perPage));
+    requestUrl.searchParams.set("aggr", "false");
 
-  const res = await fetcher.fetch(requestUrl.toString(), {
-    headers: {
-      "Accept": "application/json",
-      "Authorization": `Bearer ${accessToken}`
-    }
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) return { ok: false, status: res.status, error: data.message || data.error_description || data.error || "Falha ao consultar extrato Cora.", items: [], raw: data };
-  return { ok: true, status: res.status, items: collectListItems(data), raw: data };
+    const res = await fetcher.fetch(requestUrl.toString(), {
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${accessToken}`
+      }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, status: res.status, error: data.message || data.error_description || data.error || "Falha ao consultar extrato Cora.", items: [], raw: data };
+    lastData = data;
+    const pageItems = collectListItems(data);
+    items.push(...pageItems);
+    const hasNext = Boolean(data.has_more || data.hasMore || data.next_page || data.pagination?.next_page);
+    if (!hasNext && pageItems.length < perPage) break;
+    if (pageItems.length === 0) break;
+  }
+  return { ok: true, status: 200, items, raw: lastData };
 }
 
 async function getCoraMovements(env, { start, end }) {
@@ -1160,14 +1515,533 @@ async function getCoraMovements(env, { start, end }) {
   };
 }
 
-async function getAsaasBalance(env) {
-  const res = await fetch(`${env.ASAAS_BASE_URL}/finance/balance`, {
-    headers: { "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0" }
+function normalizeInvoiceStatus(value) {
+  const status = cleanText(value).toUpperCase();
+  const labels = {
+    PENDING: "Pendente",
+    CREATED: "Criada",
+    OPEN: "Aberta",
+    OVERDUE: "Vencida",
+    RECEIVED: "Recebida",
+    CONFIRMED: "Confirmada",
+    PAID: "Paga",
+    REFUNDED: "Estornada",
+    CANCELLED: "Cancelada",
+    CANCELED: "Cancelada",
+    DELETED: "Excluida"
+  };
+  return labels[status] || (status ? status[0] + status.slice(1).toLowerCase() : "Sem status");
+}
+
+function normalizeAsaasInvoice(item) {
+  const amount = Number(item.value ?? item.originalValue ?? item.netValue ?? 0);
+  return {
+    id: String(item.id || ""),
+    provider: "asaas",
+    customer: cleanText(item.customerName || item.customer?.name || item.description || "Cliente Asaas"),
+    description: cleanText(item.description || item.externalReference || ""),
+    amount: normalizeMoneyToCents(amount),
+    dueDate: item.dueDate || item.originalDueDate || "",
+    createdAt: item.dateCreated || item.createdAt || "",
+    status: String(item.status || ""),
+    statusLabel: normalizeInvoiceStatus(item.status),
+    invoiceUrl: item.invoiceUrl || item.bankSlipUrl || item.transactionReceiptUrl || "",
+    raw: item
+  };
+}
+
+function normalizeCoraInvoice(item) {
+  const services = Array.isArray(item.services) ? item.services : [];
+  const servicesAmount = services.reduce((sum, service) => sum + Number(service.amount || 0), 0);
+  const amount = readNestedValue(item, ["total_amount", "totalAmount", "amount", "payment_terms.amount"]) ?? servicesAmount;
+  return {
+    id: String(item.id || item.invoice_id || item.code || ""),
+    provider: "cora",
+    customer: cleanText(item.customer?.name || item.payer?.name || item.customer_name || "Cliente Cora"),
+    description: cleanText(item.description || services[0]?.description || services[0]?.name || item.code || ""),
+    amount: normalizeCoraMoneyToCents(amount),
+    dueDate: readNestedValue(item, ["payment_terms.due_date", "due_date", "dueDate"]) || "",
+    createdAt: item.created_at || item.createdAt || item.issue_date || "",
+    status: String(item.status || ""),
+    statusLabel: normalizeInvoiceStatus(item.status),
+    invoiceUrl: readNestedValue(item, ["payment_options.bank_slip.url", "bank_slip.url", "invoice_url", "url"]) || "",
+    raw: item
+  };
+}
+
+async function getAsaasInvoices(env) {
+  const items = [];
+  let offset = 0;
+  const limit = 100;
+  for (let page = 0; page < 100; page++) {
+    const requestUrl = new URL(`${env.ASAAS_BASE_URL}/payments`);
+    requestUrl.searchParams.set("limit", String(limit));
+    requestUrl.searchParams.set("offset", String(offset));
+    const res = await fetch(requestUrl.toString(), {
+      headers: { "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0", "accept": "application/json" }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: data.errors?.[0]?.description || data.message || data.error || "Falha ao consultar faturas Asaas.", items: [] };
+    }
+    const pageItems = collectListItems(data);
+    items.push(...pageItems);
+    if (!data.hasMore || pageItems.length === 0) break;
+    offset += limit;
+  }
+  return { ok: true, provider: "asaas", items: items.map(normalizeAsaasInvoice).filter(item => item.id), total: items.length };
+}
+
+async function getCoraInvoices(env) {
+  const accessToken = await getCoraAccessToken(env);
+  const baseUrl = getCoraBaseUrl(env);
+  const fetcher = getCoraFetcher(env);
+  const items = [];
+  const perPage = 100;
+  for (let page = 1; page <= 100; page++) {
+    const requestUrl = new URL(`${baseUrl}/v2/invoices/`);
+    requestUrl.searchParams.set("page", String(page));
+    requestUrl.searchParams.set("perPage", String(perPage));
+    const res = await fetcher.fetch(requestUrl.toString(), {
+      headers: { "Accept": "application/json", "Authorization": `Bearer ${accessToken}` }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: data.message || data.error_description || data.error || "Falha ao consultar faturas Cora.", items: [] };
+    }
+    const pageItems = collectListItems(data);
+    items.push(...pageItems);
+    const hasNext = Boolean(data.has_more || data.hasMore || data.next_page || data.pagination?.next_page);
+    if (!hasNext && pageItems.length < perPage) break;
+    if (pageItems.length === 0) break;
+  }
+  return { ok: true, provider: "cora", items: items.map(normalizeCoraInvoice).filter(item => item.id), total: items.length };
+}
+
+async function deleteAsaasInvoice(env, invoiceId) {
+  const res = await fetch(`${env.ASAAS_BASE_URL}/payments/${encodeURIComponent(invoiceId)}`, {
+    method: "DELETE",
+    headers: { "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0", "accept": "application/json" }
   });
   const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, status: res.status, error: data.errors?.[0]?.description || data.message || data.error || "Nao foi possivel excluir a fatura Asaas." };
+  return { ok: true, provider: "asaas", id: invoiceId, deleted: data.deleted !== false };
+}
+
+async function deleteAsaasInvoicesBulk(env, ids) {
+  const results = [];
+  for (const id of ids.slice(0, 200)) {
+    const result = await deleteAsaasInvoice(env, id);
+    results.push({ id, ...result });
+  }
+  const deletedCount = results.filter(item => item.ok).length;
+  return {
+    ok: true,
+    requestedCount: ids.length,
+    processedCount: results.length,
+    deletedCount,
+    errorCount: results.length - deletedCount,
+    results
+  };
+}
+
+function getRegistrationAsaasPaymentId(registration) {
+  return cleanText(registration.creditCardAsaasPaymentId || registration.asaasPaymentId || (
+    registration.paymentProvider !== "cora" ? registration.paymentExternalId : ""
+  ));
+}
+
+function isAsaasPaidStatus(status) {
+  return ["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"].includes(String(status || "").toUpperCase());
+}
+
+function isAsaasPendingStatus(status) {
+  return ["PENDING", "OVERDUE"].includes(String(status || "").toUpperCase());
+}
+
+function paidDateForReceiveInCash(registration) {
+  const value = registration.manualPaymentConfirmedAt || registration.paymentConfirmedAt || registration.paidAt || registration.updatedAt || registration.createdAt;
+  const date = value ? new Date(value) : new Date();
+  return Number.isNaN(date.getTime()) ? formatDateOnly(new Date()) : formatDateOnly(date);
+}
+
+async function getAsaasPayment(env, paymentId) {
+  const res = await fetch(`${env.ASAAS_BASE_URL}/payments/${encodeURIComponent(paymentId)}`, {
+    headers: { "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0", "accept": "application/json" }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { ok: false, status: res.status, notFound: res.status === 404, error: data.errors?.[0]?.description || data.message || data.error || "Falha ao consultar fatura Asaas.", raw: data };
+  }
+  return { ok: true, status: res.status, rawStatus: data.status || "", raw: data };
+}
+
+async function receiveAsaasPaymentInCash(env, paymentId, registration) {
+  const payload = {
+    paymentDate: paidDateForReceiveInCash(registration),
+    value: Number(registration.amount || 0) / 100,
+    notifyCustomer: false
+  };
+  const res = await fetch(`${env.ASAAS_BASE_URL}/payments/${encodeURIComponent(paymentId)}/receiveInCash`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0", "accept": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { ok: false, status: res.status, error: data.errors?.[0]?.description || data.message || data.error || "Nao foi possivel marcar a fatura como recebida no Asaas.", raw: data };
+  }
+  return { ok: true, status: res.status, raw: data };
+}
+
+async function listAsaasRegistrations(env) {
+  const docs = [];
+  let pageToken = "";
+  while (docs.length < 1000) {
+    const pageSize = 300;
+    const pageUrl = new URL(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations`);
+    pageUrl.searchParams.set("key", env.FIREBASE_API_KEY);
+    pageUrl.searchParams.set("pageSize", String(pageSize));
+    if (pageToken) pageUrl.searchParams.set("pageToken", pageToken);
+    const res = await fetch(pageUrl.toString());
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error?.message || "Falha ao listar inscricoes.");
+    docs.push(...(data.documents || []));
+    pageToken = data.nextPageToken || "";
+    if (!pageToken) break;
+  }
+
+  return docs
+    .map(document => {
+      const fields = document.fields || {};
+      const registration = firestoreDocumentFieldsToJs(fields);
+      registration.registrationId = document.name.split("/").pop();
+      registration.documentName = document.name;
+      return registration;
+    })
+    .filter(registration => getRegistrationAsaasPaymentId(registration));
+}
+
+async function listPaidAsaasRegistrations(env) {
+  return (await listAsaasRegistrations(env))
+    .filter(registration => registration.paymentStatus === "pago");
+}
+
+async function listPendingAsaasRegistrations(env) {
+  return (await listAsaasRegistrations(env))
+    .filter(registration => (registration.paymentStatus || "pendente") === "pendente");
+}
+
+function isLocallyUnpaidRegistration(registration) {
+  return String(registration.paymentStatus || "pendente") !== "pago";
+}
+
+function cleanupCandidateItem(registration, bank) {
+  const paymentId = getRegistrationAsaasPaymentId(registration);
+  const invoiceDeleted = bank.notFound === true;
+  return {
+    registrationId: registration.registrationId,
+    paymentId,
+    nome: registration.nome || "Atleta",
+    amount: Number(registration.amount || 0),
+    systemStatus: registration.paymentStatus || "pendente",
+    asaasStatus: invoiceDeleted ? "DELETED_OR_MISSING" : (bank.rawStatus || ""),
+    asaasStatusLabel: invoiceDeleted ? "Apagada/ausente" : normalizeInvoiceStatus(bank.rawStatus),
+    invoiceUrl: bank.raw?.invoiceUrl || bank.raw?.bankSlipUrl || registration.invoiceUrl || "",
+    invoiceExists: bank.ok,
+    invoiceDeleted,
+    canDeleteInvoice: bank.ok && isAsaasPendingStatus(bank.rawStatus)
+  };
+}
+
+async function deleteFirestoreDocument(env, documentName) {
+  const res = await fetch(`https://firestore.googleapis.com/v1/${documentName}?key=${env.FIREBASE_API_KEY}`, { method: "DELETE" });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body };
+}
+
+async function cleanupPendingAsaasRegistrations(env, { apply = false, registrationIds = [] } = {}) {
+  const onlyIds = new Set(registrationIds);
+  const registrations = (await listAsaasRegistrations(env))
+    .filter(isLocallyUnpaidRegistration)
+    .filter(registration => onlyIds.size === 0 || onlyIds.has(registration.registrationId));
+  const checked = [];
+  const candidates = [];
+  const ignored = [];
+  const deleted = [];
+  const errors = [];
+
+  for (const registration of registrations) {
+    const paymentId = getRegistrationAsaasPaymentId(registration);
+    const bank = await getAsaasPayment(env, paymentId);
+    const item = cleanupCandidateItem(registration, bank);
+    checked.push(item);
+
+    const isCandidate = bank.notFound || (bank.ok && isAsaasPendingStatus(bank.rawStatus));
+    if (!isCandidate) {
+      ignored.push(item);
+      continue;
+    }
+    candidates.push(item);
+
+    if (apply) {
+      let invoiceDelete = { ok: true, skipped: true, reason: item.invoiceDeleted ? "invoice_already_missing" : "invoice_not_deletable" };
+      if (item.canDeleteInvoice) invoiceDelete = await deleteAsaasInvoice(env, paymentId);
+      if (!invoiceDelete.ok) {
+        errors.push({ ...item, step: "asaas_invoice", error: invoiceDelete.error || "Falha ao apagar fatura no Asaas.", status: invoiceDelete.status });
+        continue;
+      }
+
+      const registrationDelete = await deleteFirestoreDocument(env, registration.documentName);
+      if (!registrationDelete.ok) {
+        errors.push({ ...item, step: "registration", error: "Falha ao apagar inscricao no sistema.", status: registrationDelete.status });
+        continue;
+      }
+      deleted.push({ ...item, invoiceDelete, registrationDelete });
+    }
+  }
+
+  return {
+    ok: true,
+    apply,
+    checked: checked.length,
+    candidates,
+    candidateCount: candidates.length,
+    ignoredCount: ignored.length,
+    deleted,
+    deletedCount: deleted.length,
+    errors,
+    errorCount: errors.length,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function reconcilePaidAsaasInvoices(env, { apply = false } = {}) {
+  const paidRegistrations = await listPaidAsaasRegistrations(env);
+  const checked = [];
+  const conflicts = [];
+  const alreadyAligned = [];
+  const errors = [];
+  const applied = [];
+
+  for (const registration of paidRegistrations) {
+    const paymentId = getRegistrationAsaasPaymentId(registration);
+    const bank = await getAsaasPayment(env, paymentId);
+    const item = {
+      registrationId: registration.registrationId,
+      paymentId,
+      nome: registration.nome || "Atleta",
+      amount: Number(registration.amount || 0),
+      systemStatus: registration.paymentStatus,
+      asaasStatus: bank.rawStatus || "",
+      asaasStatusLabel: normalizeInvoiceStatus(bank.rawStatus),
+      invoiceUrl: bank.raw?.invoiceUrl || bank.raw?.bankSlipUrl || registration.invoiceUrl || "",
+      paidDate: paidDateForReceiveInCash(registration)
+    };
+    checked.push(item);
+
+    if (!bank.ok) {
+      errors.push({ ...item, error: bank.error, status: bank.status });
+      continue;
+    }
+    if (isAsaasPaidStatus(bank.rawStatus)) {
+      alreadyAligned.push(item);
+      continue;
+    }
+    if (!isAsaasPendingStatus(bank.rawStatus)) {
+      errors.push({ ...item, error: `Status Asaas nao corrigido automaticamente: ${bank.rawStatus || "sem status"}` });
+      continue;
+    }
+
+    conflicts.push(item);
+    if (apply) {
+      const result = await receiveAsaasPaymentInCash(env, paymentId, registration);
+      if (result.ok) applied.push({ ...item, resultStatus: result.raw?.status || "RECEIVED_IN_CASH" });
+      else errors.push({ ...item, error: result.error, status: result.status });
+    }
+  }
+
+  return {
+    ok: true,
+    apply,
+    checked: checked.length,
+    conflicts,
+    conflictCount: conflicts.length,
+    alreadyAlignedCount: alreadyAligned.length,
+    applied,
+    appliedCount: applied.length,
+    errors,
+    errorCount: errors.length,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+function asaasSystemConflictItem(registration, bank) {
+  const paymentId = getRegistrationAsaasPaymentId(registration);
+  return {
+    registrationId: registration.registrationId,
+    paymentId,
+    nome: registration.nome || "Atleta",
+    amount: Number(registration.amount || 0),
+    systemStatus: registration.paymentStatus || "pendente",
+    asaasStatus: bank.rawStatus || "",
+    asaasStatusLabel: normalizeInvoiceStatus(bank.rawStatus),
+    invoiceUrl: bank.raw?.invoiceUrl || bank.raw?.bankSlipUrl || registration.invoiceUrl || "",
+    euVouCardUrl: registration.euVouCardUrl || "",
+    hasCard: Boolean(registration.euVouCardUrl)
+  };
+}
+
+async function reconcileAsaasPaidSystemPending(env, { confirm = false, registrationIds = [] } = {}, ctx) {
+  const onlyIds = new Set(registrationIds);
+  const pendingRegistrations = (await listPendingAsaasRegistrations(env))
+    .filter(registration => onlyIds.size === 0 || onlyIds.has(registration.registrationId));
+  const checked = [];
+  const conflicts = [];
+  const alreadyAligned = [];
+  const errors = [];
+  const confirmed = [];
+
+  for (const registration of pendingRegistrations) {
+    const paymentId = getRegistrationAsaasPaymentId(registration);
+    const bank = await getAsaasPayment(env, paymentId);
+    const item = asaasSystemConflictItem(registration, bank);
+    checked.push(item);
+
+    if (!bank.ok) {
+      errors.push({ ...item, error: bank.error, status: bank.status });
+      continue;
+    }
+    if (!isAsaasPaidStatus(bank.rawStatus)) {
+      alreadyAligned.push(item);
+      continue;
+    }
+
+    conflicts.push(item);
+    if (confirm) {
+      const result = await confirmRegistrationPaymentById(env, registration.registrationId, ctx, { skipNotify: true, markGhost: true });
+      if (result.found) confirmed.push({ ...item, confirmResult: result });
+      else errors.push({ ...item, error: result.reason || result.error || "Inscricao nao encontrada." });
+    }
+  }
+
+  return {
+    ok: true,
+    confirm,
+    checked: checked.length,
+    conflicts,
+    conflictCount: conflicts.length,
+    alreadyAlignedCount: alreadyAligned.length,
+    confirmed,
+    confirmedCount: confirmed.length,
+    errors,
+    errorCount: errors.length,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function deleteCoraInvoice(env, invoiceId) {
+  const accessToken = await getCoraAccessToken(env);
+  const baseUrl = getCoraBaseUrl(env);
+  const fetcher = getCoraFetcher(env);
+  let res = await fetcher.fetch(`${baseUrl}/v2/invoices/${encodeURIComponent(invoiceId)}`, {
+    method: "DELETE",
+    headers: { "Accept": "application/json", "Authorization": `Bearer ${accessToken}` }
+  });
+  if (res.status === 404) {
+    res = await fetcher.fetch(`${baseUrl}/v2/invoices/${encodeURIComponent(invoiceId)}/`, {
+      method: "DELETE",
+      headers: { "Accept": "application/json", "Authorization": `Bearer ${accessToken}` }
+    });
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, status: res.status, error: data.message || data.error_description || data.error || "Nao foi possivel excluir a fatura Cora." };
+  return { ok: true, provider: "cora", id: invoiceId, deleted: true };
+}
+
+async function getAsaasBalance(env) {
+  const [balanceResult, pendingCreditResult] = await Promise.allSettled([
+    fetch(`${env.ASAAS_BASE_URL}/finance/balance`, {
+      headers: { "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0" }
+    }).then(async res => ({ res, data: await res.json().catch(() => ({})) })),
+    getAsaasCreditCardPendingCredit(env)
+  ]);
+
+  if (balanceResult.status === "rejected") {
+    return { ok: false, error: balanceResult.reason?.message || "Falha ao consultar Asaas." };
+  }
+
+  const { res, data } = balanceResult.value;
   if (!res.ok) return { ok: false, status: res.status, error: data.errors?.[0]?.description || data.message || data.error || "Falha ao consultar Asaas.", raw: data };
   const value = firstNumericValue(data, ["balance", "availableBalance", "available", "value"]);
-  return { ok: true, status: res.status, balance: value, balanceCents: normalizeMoneyToCents(value), raw: data };
+  return {
+    ok: true,
+    status: res.status,
+    balance: value,
+    balanceCents: normalizeMoneyToCents(value),
+    pendingCredit: pendingCreditResult.status === "fulfilled"
+      ? pendingCreditResult.value
+      : { ok: false, error: pendingCreditResult.reason?.message || "Falha ao consultar valores a creditar no Asaas.", count: 0, amountCents: 0, grossAmountCents: 0 },
+    raw: data
+  };
+}
+
+async function getAsaasCreditCardPendingCredit(env) {
+  const items = [];
+  let offset = 0;
+  const limit = 100;
+  for (let page = 0; page < 100; page++) {
+    const requestUrl = new URL(`${env.ASAAS_BASE_URL}/payments`);
+    requestUrl.searchParams.set("limit", String(limit));
+    requestUrl.searchParams.set("offset", String(offset));
+    requestUrl.searchParams.set("status", "CONFIRMED");
+    requestUrl.searchParams.set("billingType", "CREDIT_CARD");
+    const res = await fetch(requestUrl.toString(), {
+      headers: { "access_token": env.ASAAS_API_KEY, "User-Agent": "MCUNightRun/1.0", "accept": "application/json" }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: data.errors?.[0]?.description || data.message || data.error || "Falha ao consultar cartões confirmados no Asaas.", count: 0, amountCents: 0, grossAmountCents: 0 };
+    }
+    const pageItems = collectListItems(data);
+    items.push(...pageItems);
+    if (!data.hasMore || pageItems.length === 0) break;
+    offset += limit;
+  }
+
+  const confirmedCardItems = items.filter(item => (
+    String(item.status || "").toUpperCase() === "CONFIRMED" &&
+    String(item.billingType || "").toUpperCase() === "CREDIT_CARD"
+  ));
+  const amountCents = confirmedCardItems.reduce((sum, item) => {
+    const value = Number(item.netValue ?? item.value ?? item.originalValue ?? 0);
+    return sum + normalizeMoneyToCents(value);
+  }, 0);
+  const grossAmountCents = confirmedCardItems.reduce((sum, item) => {
+    const value = Number(item.value ?? item.originalValue ?? item.netValue ?? 0);
+    return sum + normalizeMoneyToCents(value);
+  }, 0);
+
+  return {
+    ok: true,
+    provider: "asaas",
+    source: "asaas_payments",
+    status: "CONFIRMED",
+    billingType: "CREDIT_CARD",
+    count: confirmedCardItems.length,
+    amountCents,
+    grossAmountCents,
+    items: confirmedCardItems.map(item => ({
+      id: String(item.id || ""),
+      customer: cleanText(item.customerName || item.customer || item.description || ""),
+      valueCents: normalizeMoneyToCents(Number(item.value ?? item.originalValue ?? item.netValue ?? 0)),
+      netValueCents: normalizeMoneyToCents(Number(item.netValue ?? item.value ?? item.originalValue ?? 0)),
+      status: String(item.status || ""),
+      billingType: String(item.billingType || ""),
+      estimatedCreditDate: item.estimatedCreditDate || item.creditDate || "",
+      invoiceUrl: item.invoiceUrl || "",
+    }))
+  };
 }
 
 async function getCoraBalance(env) {
@@ -1308,7 +2182,7 @@ async function testWebhookIntegration(env, provider, origin) {
 
 async function auditPendingPayments(env, options = {}) {
   const limit = options.limit || 150;
-  const pending = await listPendingRegistrations(env, limit);
+  const pending = await listPendingRegistrations(env, limit, { sinceIso: options.sinceIso });
   const results = [];
 
   for (const registration of pending) {
@@ -1366,6 +2240,60 @@ async function auditPendingPayments(env, options = {}) {
   };
 }
 
+// Rede de seguranca contra webhook perdido/atrasado ou o cliente trocar de forma de pagamento
+// no meio do checkout (isso gera uma segunda fatura/cobranca que o webhook original nunca
+// avisa sobre). Roda sozinha a cada poucos minutos (chamada pelo cron em `scheduled`) e
+// confirma automaticamente qualquer inscricao pendente cujo pagamento ja apareça como pago no
+// banco - sem depender de um admin abrir o painel e clicar em "verificar". So olha pendentes
+// das ultimas `windowHours` horas: e onde um caso "preso" realmente importa, e mantem a
+// varredura barata (nao reconsulta o banco pra inscricoes antigas e realmente abandonadas).
+async function autoReconcilePendingPayments(env, ctx, options = {}) {
+  const windowHours = options.windowHours || 6;
+  const sinceIso = new Date(Date.now() - windowHours * 3600 * 1000).toISOString();
+  const startedAt = new Date().toISOString();
+  let audit;
+  try {
+    audit = await auditPendingPayments(env, { limit: 300, sinceIso });
+  } catch (error) {
+    const logEntry = { startedAt, ok: false, error: error.message };
+    if (env.NIGHTRUN_STORAGE) await env.NIGHTRUN_STORAGE.put("payments:auto-reconcile:last-run", JSON.stringify(logEntry), { expirationTtl: 7 * 86400 });
+    console.error("[Auto Reconcile] Audit failed", error);
+    return logEntry;
+  }
+
+  const fixed = [];
+  const failed = [];
+  for (const item of audit.paidPending) {
+    try {
+      // Confirma direto (nao via confirmRegistrationPaymentById) porque essa funcao sempre
+      // marca manual:true - aqui a confirmacao veio de verificacao automatica contra o banco,
+      // nao de um clique manual do admin, entao o rastro precisa refletir isso corretamente.
+      const docUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(item.registrationId)}?key=${env.FIREBASE_API_KEY}`;
+      const docRes = await fetch(docUrl);
+      if (!docRes.ok) { failed.push({ registrationId: item.registrationId, reason: `fetch_${docRes.status}` }); continue; }
+      const document = await docRes.json();
+      const result = await confirmRegistrationDocument(env, document, ctx, { matchedPaymentField: item.matchedPaymentField, autoReconciled: true, markGhost: true });
+      fixed.push({ registrationId: item.registrationId, nome: item.nome, provider: item.provider, paymentMethod: item.paymentMethod, notifyStatus: result.notifyResult?.status });
+    } catch (error) {
+      failed.push({ registrationId: item.registrationId, reason: error.message });
+    }
+  }
+
+  const logEntry = {
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    ok: true,
+    windowHours,
+    totalChecked: audit.totalChecked,
+    totalFixed: fixed.length,
+    fixed,
+    failed
+  };
+  if (env.NIGHTRUN_STORAGE) await env.NIGHTRUN_STORAGE.put("payments:auto-reconcile:last-run", JSON.stringify(logEntry), { expirationTtl: 7 * 86400 });
+  if (fixed.length > 0) console.log("[Auto Reconcile] Fixed stuck payments", logEntry);
+  return logEntry;
+}
+
 function buildRegistrationPaymentChecks(registration) {
   const checks = [];
   const seen = new Set();
@@ -1399,6 +2327,11 @@ function buildRegistrationPaymentChecks(registration) {
 }
 
 async function createCreditCardPaymentForRegistration(env, registrationId) {
+  const methods = await getPaymentMethodsSettings(env);
+  if (methods.cartao === false) {
+    return { success: false, error: "Pagamento com cartão de crédito não está disponível no momento." };
+  }
+
   const docUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(registrationId)}?key=${env.FIREBASE_API_KEY}`;
   const docRes = await fetch(docUrl);
   if (docRes.status === 404) return { success: false, error: "Inscrição não encontrada." };
@@ -1475,12 +2408,28 @@ async function createCreditCardPaymentForRegistration(env, registrationId) {
   return { success: true, paymentId, invoiceUrl, status: payment.status || "" };
 }
 
-async function listPendingRegistrations(env, limit) {
+async function listPendingRegistrations(env, limit, options = {}) {
   const searchUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery?key=${env.FIREBASE_API_KEY}`;
+  // sinceIso restringe aos pendentes recentes (usa o indice composto paymentStatus+createdAt
+  // ja existente) - a reconciliacao automatica roda a cada poucos minutos, entao nao faz
+  // sentido nem e seguro (limite de API do banco) reconferir toda inscricao pendente desde
+  // sempre a cada tick; so as recentes podem estar "presas" por um webhook perdido.
+  const where = options.sinceIso
+    ? {
+        compositeFilter: {
+          op: "AND",
+          filters: [
+            { fieldFilter: { field: { fieldPath: "paymentStatus" }, op: "EQUAL", value: { stringValue: "pendente" } } },
+            { fieldFilter: { field: { fieldPath: "createdAt" }, op: "GREATER_THAN_OR_EQUAL", value: { timestampValue: options.sinceIso } } }
+          ]
+        }
+      }
+    : { fieldFilter: { field: { fieldPath: "paymentStatus" }, op: "EQUAL", value: { stringValue: "pendente" } } };
   const queryBody = {
     structuredQuery: {
       from: [{ collectionId: "nightrun_registrations" }],
-      where: { fieldFilter: { field: { fieldPath: "paymentStatus" }, op: "EQUAL", value: { stringValue: "pendente" } } },
+      where,
+      ...(options.sinceIso ? { orderBy: [{ field: { fieldPath: "createdAt" }, direction: "ASCENDING" }] } : {}),
       limit
     }
   };
@@ -1662,7 +2611,7 @@ async function checkAsaasPaymentStatus(env, paymentId) {
   }
 }
 
-async function checkCoraInvoiceStatus(env, invoiceId) {
+async function checkCoraInvoiceStatus(env, invoiceId, options = {}) {
   try {
     const accessToken = await getCoraAccessToken(env);
     const baseUrl = getCoraBaseUrl(env);
@@ -1686,6 +2635,12 @@ async function checkCoraInvoiceStatus(env, invoiceId) {
         const rawStatus = String(data.status || data.invoice?.status || data.data?.status || "").toLowerCase();
         const normalized = extractCoraPaymentStatus(data);
         return { ok: true, paid: normalized === "paid", status: normalized || rawStatus || "unknown", rawStatus };
+      }
+      // Token cacheado pode ter sido revogado antes do TTL vencer - descarta o cache e tenta
+      // mais uma vez com um token novo, uma unica vez, antes de desistir.
+      if (res.status === 401 && !options.retriedAfterTokenRefresh && env.NIGHTRUN_STORAGE) {
+        await env.NIGHTRUN_STORAGE.delete("cora:access-token");
+        return checkCoraInvoiceStatus(env, invoiceId, { retriedAfterTokenRefresh: true });
       }
       if (res.status !== 404) break;
     }
@@ -1763,15 +2718,83 @@ async function confirmRegistrationPaymentById(env, registrationId, ctx, options 
   return confirmRegistrationDocument(env, document, ctx, { ...options, manual: true });
 }
 
+async function sendRegistrationPaymentCardById(env, registrationId, ctx, options = {}) {
+  const docUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(registrationId)}?key=${env.FIREBASE_API_KEY}`;
+  const docRes = await fetch(docUrl);
+  if (docRes.status === 404) return { found: false, reason: "registration_not_found" };
+  if (!docRes.ok) {
+    const errorText = await docRes.text().catch(() => "");
+    return { found: false, reason: "firestore_error", status: docRes.status, error: errorText };
+  }
+  const document = await docRes.json();
+  const fields = document.fields || {};
+  if (fields.paymentStatus?.stringValue !== "pago") {
+    return { found: true, success: false, reason: "registration_not_paid", error: "Confirme o pagamento antes de enviar o card." };
+  }
+  return sendPaymentConfirmationForDocument(env, document, ctx, { force: options.force === true });
+}
+
+async function sendPaymentConfirmationForDocument(env, document, ctx, options = {}) {
+  const fields = document.fields || {};
+  const phone = fields.telefone?.stringValue?.replace(/\D/g, "") || "";
+  const nome = fields.nome?.stringValue || "Atleta";
+  const modalidadeNome = fields.modalidadeNome?.stringValue || fields.modalidade?.stringValue || fields.categoria?.stringValue || "";
+  const euVouCardUrl = fields.euVouCardUrl?.stringValue || "";
+  const confirmationSentAt = firestoreTimestamp(fields.paymentConfirmationWhatsAppSentAt);
+  const registrationId = document.name?.split("/").pop() || "";
+  const notificationLockKey = `whatsapp:payment-confirmation:${registrationId}`;
+  const notificationLocked = registrationId && env.NIGHTRUN_STORAGE
+    ? await env.NIGHTRUN_STORAGE.get(notificationLockKey)
+    : "";
+
+  if (!phone) return { found: true, success: false, status: "skipped", reason: "missing_phone" };
+  if (!euVouCardUrl) return { found: true, success: false, status: "skipped", reason: "missing_card" };
+  if (!options.force && confirmationSentAt) return { found: true, success: true, status: "skipped", reason: "already_sent" };
+  if (!options.force && notificationLocked) return { found: true, success: true, status: "queued_async", reason: "already_queued" };
+
+  const whatsappConfig = await getPaymentConfirmationWhatsAppConfig(env);
+  if (registrationId && env.NIGHTRUN_STORAGE) {
+    await env.NIGHTRUN_STORAGE.put(notificationLockKey, "processing", { expirationTtl: 3600 });
+  }
+
+  const sendPromise = sendImmediateMessage({
+    phone: formatPhoneForWhatsApp(phone),
+    text: buildPaymentConfirmationText(nome, modalidadeNome),
+    imageUrl: euVouCardUrl,
+    instanceName: whatsappConfig.instanceName,
+    adminPhone: whatsappConfig.adminPhone,
+    alunoNome: nome,
+    registrationId,
+    registrationDocumentName: document.name,
+    type: "payment_confirmation"
+  }, env)
+  .then(async res => {
+    console.log("[Payment Confirm] WhatsApp async result", { registrationId, res });
+    if (res.success) await markPaymentConfirmationSent(env, document.name, registrationId, res.instanceName || whatsappConfig.instanceName);
+    return { found: true, success: res.success, notifyResult: res, status: res.success ? "sent" : "failed" };
+  })
+  .catch(err => {
+    console.error("[Payment Confirm] WhatsApp async error", { registrationId, err });
+    return { found: true, success: false, error: err.message };
+  });
+
+  if (ctx && typeof ctx.waitUntil === "function" && !options.force) {
+    ctx.waitUntil(sendPromise);
+    return { found: true, success: true, status: "queued_async" };
+  }
+
+  return sendPromise;
+}
+
 async function confirmRegistrationDocument(env, document, ctx, options = {}) {
   const fields = document.fields || {};
   const alreadyPaid = fields.paymentStatus?.stringValue === "pago";
   const phone = fields.telefone?.stringValue?.replace(/\D/g, "") || "";
-  const nome = fields.nome?.stringValue?.split(" ")[0] || "Atleta";
-  const modalidadeNome = fields.modalidadeNome?.stringValue || fields.modalidade?.stringValue || fields.categoria?.stringValue || "";
+  const nome = fields.nome?.stringValue || "Atleta";
   const euVouCardUrl = fields.euVouCardUrl?.stringValue || "";
+  const confirmationSentAt = firestoreTimestamp(fields.paymentConfirmationWhatsAppSentAt);
   const registrationId = document.name?.split("/").pop() || "";
-  console.log("[Payment Confirm] Registration data", { registrationId, alreadyPaid, hasPhone: Boolean(phone), nome, hasCard: Boolean(euVouCardUrl), euVouCardUrl });
+  console.log("[Payment Confirm] Registration data", { registrationId, alreadyPaid, hasPhone: Boolean(phone), nome, hasCard: Boolean(euVouCardUrl), confirmationSentAt, euVouCardUrl });
 
   if (options.matchedPaymentField === "creditCardAsaasPaymentId") {
     await markRegistrationAsAsaasCreditCard(env, document).catch(error => {
@@ -1780,15 +2803,20 @@ async function confirmRegistrationDocument(env, document, ctx, options = {}) {
   }
 
   if (!alreadyPaid) {
-    const updateMask = options.manual
-      ? "updateMask.fieldPaths=paymentStatus&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=manualPaymentConfirmedAt"
-      : "updateMask.fieldPaths=paymentStatus";
+    const maskFields = ["paymentStatus"];
     const patchFields = { paymentStatus: { stringValue: "pago" } };
     if (options.manual) {
+      maskFields.push("updatedAt", "manualPaymentConfirmedAt");
       const now = new Date().toISOString();
       patchFields.updatedAt = { timestampValue: now };
       patchFields.manualPaymentConfirmedAt = { timestampValue: now };
     }
+    if (options.markGhost) {
+      maskFields.push("pendenciaFantasma", "pendenciaFantasmaDetectadaEm");
+      patchFields.pendenciaFantasma = { booleanValue: true };
+      patchFields.pendenciaFantasmaDetectadaEm = { timestampValue: new Date().toISOString() };
+    }
+    const updateMask = maskFields.map(f => `updateMask.fieldPaths=${f}`).join("&");
     const patchRes = await fetch(`https://firestore.googleapis.com/v1/${document.name}?key=${env.FIREBASE_API_KEY}&${updateMask}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -1798,38 +2826,43 @@ async function confirmRegistrationDocument(env, document, ctx, options = {}) {
   }
 
   let notifyResult = null;
-  if (phone && (!alreadyPaid || options.forceNotify)) {
-    console.log("[Payment Confirm] Sending WhatsApp (Async)", { registrationId, phone: formatPhoneForWhatsApp(phone), forceNotify: Boolean(options.forceNotify), hasCard: Boolean(euVouCardUrl) });
-    const sendPromise = sendImmediateMessage({
-      phone: formatPhoneForWhatsApp(phone),
-      text: buildPaymentConfirmationText(nome, modalidadeNome),
-      imageUrl: euVouCardUrl || undefined
-    }, env, { skipKvFallback: true })
-    .then(res => {
-      console.log("[Payment Confirm] WhatsApp async result", { registrationId, res });
-      return res;
-    })
-    .catch(err => {
-      console.error("[Payment Confirm] WhatsApp async error", { registrationId, err });
-      return { success: false, error: err.message };
-    });
-
-    if (ctx && typeof ctx.waitUntil === "function") {
-      ctx.waitUntil(sendPromise);
-      notifyResult = { status: "queued_async" };
-    } else {
-      notifyResult = await sendPromise;
-    }
+  if (!options.skipNotify) {
+    console.log("[Payment Confirm] Sending WhatsApp (Async)", { registrationId, forceNotify: Boolean(options.forceNotify), hasCard: Boolean(euVouCardUrl) });
+    notifyResult = await sendPaymentConfirmationForDocument(env, document, ctx, { force: false });
   } else {
-    console.log("[Payment Confirm] WhatsApp skipped", { registrationId, hasPhone: Boolean(phone), alreadyPaid, forceNotify: Boolean(options.forceNotify) });
+    const reason = "skip_notify";
+    notifyResult = { status: "skipped", reason };
+    console.log("[Payment Confirm] WhatsApp skipped", { registrationId, reason, hasPhone: Boolean(phone), hasCard: Boolean(euVouCardUrl), confirmationSentAt });
   }
 
   return { found: true, alreadyPaid, forcedNotify: Boolean(options.forceNotify), notifyResult };
 }
 
+async function markPaymentConfirmationSent(env, documentName, registrationId, instanceName) {
+  const now = new Date().toISOString();
+  const result = await patchFirestoreDocument(env, documentName, {
+    paymentConfirmationWhatsAppSentAt: { timestampValue: now },
+    paymentConfirmationWhatsAppInstance: { stringValue: instanceName || "" }
+  });
+  if (registrationId && env.NIGHTRUN_STORAGE) {
+    await env.NIGHTRUN_STORAGE.put(`whatsapp:payment-confirmation:${registrationId}`, "sent", { expirationTtl: 604800 });
+  }
+  return result;
+}
+
 async function queueMessage(msg, env) {
   const key = `mq:pending:${Date.now()}:${crypto.randomUUID().substring(0, 8)}`;
   await env.NIGHTRUN_STORAGE.put(key, JSON.stringify({ ...msg, enqueuedAt: new Date().toISOString() }));
+  await markQueueHasPending(env);
+}
+
+// Sinalizador leve (1 KV key) que substitui um list() a cada tick do cron para descobrir se
+// a fila tem algo - list() tem cota MUITO mais apertada (1000/dia, igual escrita) do que get()
+// (100k/dia). So list() de verdade quando esse flag diz que ha algo, o que é raro comparado
+// aos 1440 ticks/dia do cron.
+async function markQueueHasPending(env) {
+  if (!env.NIGHTRUN_STORAGE) return;
+  await env.NIGHTRUN_STORAGE.put("mq:has-pending", "1");
 }
 
 async function sendImmediateMessage(msg, env, options = {}) {
@@ -1873,6 +2906,10 @@ async function sendMessageWithFallback(msg, env) {
     }
   }
 
+  if (msg.type === "payment_confirmation") {
+    return { ...first, success: false, fallback: "image_required", attempts };
+  }
+
   console.log("[WhatsApp Fallback] Trying text only", { phone: msg.phone });
   const textOnly = await sendMessage({ ...msg, imageUrl: "" }, env);
   attempts.push(textOnly);
@@ -1880,61 +2917,86 @@ async function sendMessageWithFallback(msg, env) {
   return { ...textOnly, fallback: "text_only", attempts };
 }
 
+// Drena a fila de forma 100% server-side (disparada pelo cron `* * * * *`), sem depender do front.
+// Cada execução ("tick") tem um orcamento de tempo (budget) menor que o intervalo do cron e menor
+// que o TTL do lock, entao dois ticks nunca se sobrepoem (evita envio duplicado). O espacamento de
+// 30s entre mensagens vem do carimbo `whatsapp:last-send:<instancia>` no KV, que persiste entre ticks:
+// se a proxima mensagem ainda nao venceu os 30s, o tick para e deixa o restante para o proximo cron.
 async function processQueue(env) {
   const isPaused = await env.NIGHTRUN_STORAGE.get("mq:paused") === "true";
   if (isPaused) return { processed: 0, skipped: "paused" };
 
+  // Espia a fila via um flag leve (get, cota de 100k/dia) ANTES de fazer list() de verdade
+  // (cota bem mais apertada, 1000/dia) ou travar o lock (escrita, mesma cota apertada). O cron
+  // roda a cada minuto (1440x/dia) e a grande maioria dos ticks encontra a fila vazia - sem
+  // esse flag, tanto o list() quanto a escrita do lock estourariam a cota diária sozinhos.
+  const hasPending = await env.NIGHTRUN_STORAGE.get("mq:has-pending");
+  if (hasPending !== "1") return { processed: 0, skipped: "empty" };
+
   const lock = await env.NIGHTRUN_STORAGE.get("mq:processing");
   if (lock === "true") return { processed: 0, skipped: "already_processing" };
 
-  await env.NIGHTRUN_STORAGE.put("mq:processing", "true", { expirationTtl: 60 });
+  // Orcamento do tick menor que o intervalo do cron (60s). O lock e sempre liberado no finally;
+  // o TTL e apenas uma trava de seguranca caso a execucao morra no meio. O KV exige TTL >= 60s.
+  const budgetMs = Math.max(5000, Number(env.WHATSAPP_QUEUE_TICK_BUDGET_MS || 45000));
+  const lockTtl = Math.max(60, Math.ceil(budgetMs / 1000) + 15);
+  const delayMs = Math.max(0, Number(env.WHATSAPP_INSTANCE_DELAY_MS || 30000));
+  const limit = Number(env.WHATSAPP_QUEUE_LIMIT || 60);
+
+  await env.NIGHTRUN_STORAGE.put("mq:processing", "true", { expirationTtl: lockTtl });
+  const tickStart = Date.now();
   try {
-    const limit = Number(env.WHATSAPP_QUEUE_LIMIT || 60);
-    const concurrency = 1;
     const list = await env.NIGHTRUN_STORAGE.list({ prefix: "mq:pending:", limit });
-    if (list.keys.length === 0) return { processed: 0 };
+    if (list.keys.length === 0) {
+      await env.NIGHTRUN_STORAGE.delete("mq:has-pending");
+      return { processed: 0 };
+    }
 
     let processed = 0;
     let sent = 0;
     let failed = 0;
 
-    for (let i = 0; i < list.keys.length; i += concurrency) {
-      const chunk = list.keys.slice(i, i + concurrency);
-      const results = await Promise.allSettled(chunk.map(async (key, index) => {
-        const data = await env.NIGHTRUN_STORAGE.get(key.name);
-        if (!data) return;
+    // FIFO: as chaves incluem o timestamp de enfileiramento no nome, entao ja vem ordenadas.
+    for (const key of list.keys) {
+      if (Date.now() - tickStart >= budgetMs) break;
 
-        const msg = JSON.parse(data);
-        if (msg.type === "registration_notice") {
-          msg.imageUrl = "";
-        }
-        await sleep(index * Number(env.WHATSAPP_QUEUE_STAGGER_MS || 150));
-        const result = await sendMessageWithFallback(msg, env);
-        await logToFirestore(msg, result, env);
+      const data = await env.NIGHTRUN_STORAGE.get(key.name);
+      if (!data) continue;
+      const msg = JSON.parse(data);
+      if (msg.type === "registration_notice") msg.imageUrl = "";
 
-        if (result.success) {
-          await env.NIGHTRUN_STORAGE.delete(key.name);
-          return { success: true, result };
-        } else {
-          await markQueueFailure(key.name, msg, result, env);
-          return { success: false, result };
-        }
-      }));
+      // Quanto falta para esta instancia poder enviar de novo (respeitando os 30s).
+      const instanceName = msg.instanceName || "";
+      let waitMs = 0;
+      if (instanceName) {
+        const last = Number(await env.NIGHTRUN_STORAGE.get(`whatsapp:last-send:${instanceName}`) || 0);
+        waitMs = Math.max(0, last + delayMs - Date.now());
+      }
+      // Se esperar estoura o orcamento do tick, para aqui e deixa para o proximo cron.
+      if ((Date.now() - tickStart) + waitMs > budgetMs) break;
+      if (waitMs > 0) await sleep(waitMs);
 
-      for (const item of results) {
-        if (item.status === "fulfilled") {
-          processed++;
-          if (item.value?.success) sent++;
-          else failed++;
-        } else {
-          processed++;
-          failed++;
-          console.error("Queue chunk error:", item.reason);
+      // sendMessage aplica o throttle interno por instancia (agora ~0, pois ja aguardamos) e
+      // atualiza o carimbo last-send apos enviar.
+      const result = await sendMessageWithFallback(msg, env);
+      await logToFirestore(msg, result, env);
+      processed++;
+
+      if (result.success) {
+        sent++;
+        if (msg.type === "payment_confirmation" && msg.registrationDocumentName) {
+          await markPaymentConfirmationSent(env, msg.registrationDocumentName, msg.registrationId, result.instanceName || msg.instanceName);
         }
+        await env.NIGHTRUN_STORAGE.delete(key.name);
+      } else {
+        failed++;
+        await markQueueFailure(key.name, msg, result, env);
       }
     }
 
-    return { processed, sent, failed, remainingHint: list.list_complete === false };
+    const remaining = await env.NIGHTRUN_STORAGE.list({ prefix: "mq:pending:", limit: 1 });
+    if (remaining.keys.length === 0) await env.NIGHTRUN_STORAGE.delete("mq:has-pending");
+    return { processed, sent, failed, remainingHint: remaining.keys.length > 0 };
   } finally {
     await env.NIGHTRUN_STORAGE.delete("mq:processing");
   }
@@ -2030,8 +3092,14 @@ async function throttleWhatsAppInstance(env, instanceName) {
 
 async function markQueueFailure(key, msg, result, env) {
   const attempts = Number(msg.attempts || 0) + 1;
-  if (attempts >= Number(env.WHATSAPP_QUEUE_MAX_ATTEMPTS || 3)) {
+  const maxAttempts = msg.type === "payment_confirmation"
+    ? Number(env.WHATSAPP_CONFIRMATION_MAX_ATTEMPTS || 20)
+    : Number(env.WHATSAPP_QUEUE_MAX_ATTEMPTS || 3);
+  if (attempts >= maxAttempts) {
     await env.NIGHTRUN_STORAGE.delete(key);
+    if (msg.type === "payment_confirmation" && msg.registrationId) {
+      await env.NIGHTRUN_STORAGE.delete(`whatsapp:payment-confirmation:${msg.registrationId}`);
+    }
     return;
   }
 
@@ -2045,6 +3113,323 @@ async function markQueueFailure(key, msg, result, env) {
 
 function sleep(ms) {
   return ms > 0 ? new Promise(r => setTimeout(r, ms)) : Promise.resolve();
+}
+
+// ==================== RESUMO OPERACIONAL DIARIO ====================
+const BR_OFFSET_MS = 3 * 3600 * 1000; // Brasil = UTC-3
+
+async function getFirestoreDoc(env, collection, id) {
+  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_API_KEY) return null;
+  const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection}/${id}?key=${env.FIREBASE_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const fields = data.fields || {};
+  const out = {};
+  for (const key in fields) out[key] = firestoreValueToJs(fields[key]);
+  return out;
+}
+
+function formatBRL(cents) {
+  const value = Number(cents || 0) / 100;
+  const [intPart, decPart] = value.toFixed(2).split(".");
+  const withThousands = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `R$ ${withThousands},${decPart}`;
+}
+
+// Componentes de calendario BR e o intervalo UTC do "dia anterior" (00:00-23:59 BR).
+function brDayContext(nowUtcMs) {
+  const br = new Date(nowUtcMs - BR_OFFSET_MS);
+  const Y = br.getUTCFullYear(), M = br.getUTCMonth(), D = br.getUTCDate();
+  const hh = String(br.getUTCHours()).padStart(2, "0");
+  const mm = String(br.getUTCMinutes()).padStart(2, "0");
+  const todayStr = `${Y}-${String(M + 1).padStart(2, "0")}-${String(D).padStart(2, "0")}`;
+  const startUtc = Date.UTC(Y, M, D - 1) + BR_OFFSET_MS; // dia anterior 00:00 BR em UTC
+  const endUtc = Date.UTC(Y, M, D) + BR_OFFSET_MS;       // hoje 00:00 BR em UTC
+  const yesterday = new Date(Date.UTC(Y, M, D - 1));
+  const yesterdayStr = `${yesterday.getUTCFullYear()}-${String(yesterday.getUTCMonth() + 1).padStart(2, "0")}-${String(yesterday.getUTCDate()).padStart(2, "0")}`;
+  const yesterdayLabel = `${String(yesterday.getUTCDate()).padStart(2, "0")}/${String(yesterday.getUTCMonth() + 1).padStart(2, "0")}/${yesterday.getUTCFullYear()}`;
+  const yesterdayShort = `${String(yesterday.getUTCDate()).padStart(2, "0")}/${String(yesterday.getUTCMonth() + 1).padStart(2, "0")}`;
+  return { nowHM: `${hh}:${mm}`, todayStr, yesterdayStr, startIso: new Date(startUtc).toISOString(), endIso: new Date(endUtc).toISOString(), yesterdayLabel, yesterdayShort };
+}
+
+// Intervalo UTC (00:00-23:59 BR) de uma data especifica (envio manual, hoje ou passado).
+function brRangeForDate(dateStr) {
+  const [Y, M, D] = String(dateStr).split("-").map(Number);
+  const startUtc = Date.UTC(Y, M - 1, D) + BR_OFFSET_MS;
+  const endUtc = Date.UTC(Y, M - 1, D + 1) + BR_OFFSET_MS;
+  const label = `${String(D).padStart(2, "0")}/${String(M).padStart(2, "0")}/${Y}`;
+  const shortLabel = `${String(D).padStart(2, "0")}/${String(M).padStart(2, "0")}`;
+  return { dateStr, startIso: new Date(startUtc).toISOString(), endIso: new Date(endUtc).toISOString(), label, shortLabel };
+}
+
+async function computeDailySummary(env, startIso, endIso) {
+  const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery?key=${env.FIREBASE_API_KEY}`;
+  const body = {
+    structuredQuery: {
+      from: [{ collectionId: "nightrun_registrations" }],
+      where: {
+        compositeFilter: {
+          op: "AND",
+          filters: [
+            { fieldFilter: { field: { fieldPath: "createdAt" }, op: "GREATER_THAN_OR_EQUAL", value: { timestampValue: startIso } } },
+            { fieldFilter: { field: { fieldPath: "createdAt" }, op: "LESS_THAN", value: { timestampValue: endIso } } },
+          ],
+        },
+      },
+      limit: 5000,
+    },
+  };
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const rows = await res.json().catch(() => []);
+  let feitas = 0, confirmadasDoDia = 0, arrecadado = 0;
+  const cupons = {};
+  const semCupom = { count: 0, valorCents: 0 };
+  const confirmadosNomes = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const f = row.document?.fields;
+    if (!f) continue;
+    feitas++;
+    const pago = firestoreString(f.paymentStatus) === "pago";
+    if (pago) {
+      confirmadasDoDia++;
+      const amount = firestoreNumber(f.amount);
+      arrecadado += amount;
+      const nome = firestoreString(f.nome).trim().toUpperCase();
+      if (nome) {
+        const iso = firestoreTimestamp(f.createdAt);
+        let hora = "";
+        if (iso) {
+          const local = new Date(new Date(iso).getTime() - BR_OFFSET_MS);
+          hora = `${String(local.getUTCHours()).padStart(2, "0")}:${String(local.getUTCMinutes()).padStart(2, "0")}`;
+        }
+        confirmadosNomes.push({ nome, hora });
+      }
+      // Cupons e "sem cupom" contam apenas inscricoes confirmadas.
+      const code = firestoreString(f.couponCode).toUpperCase();
+      const usouCupom = (f.descontoCupom?.booleanValue === true || Boolean(code)) && Boolean(code);
+      if (usouCupom) {
+        const info = cupons[code] || { count: 0, valorCents: 0 };
+        info.count += 1;
+        info.valorCents += amount;
+        cupons[code] = info;
+      } else {
+        semCupom.count += 1;
+        semCupom.valorCents += amount;
+      }
+    }
+  }
+  confirmadosNomes.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  return { feitas, confirmadasDoDia, arrecadado, cupons, semCupom, confirmadosNomes };
+}
+
+// Conta confirmadas no total; se cutoffIso for informado, conta apenas as criadas ate aquele
+// instante (usado para relatorios de datas passadas, sem incluir inscricoes futuras aquela data).
+async function countConfirmedRegistrations(env, cutoffIso) {
+  const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runAggregationQuery?key=${env.FIREBASE_API_KEY}`;
+  const filters = [{ fieldFilter: { field: { fieldPath: "paymentStatus" }, op: "EQUAL", value: { stringValue: "pago" } } }];
+  if (cutoffIso) filters.push({ fieldFilter: { field: { fieldPath: "createdAt" }, op: "LESS_THAN", value: { timestampValue: cutoffIso } } });
+  const body = {
+    structuredAggregationQuery: {
+      aggregations: [{ alias: "total", count: {} }],
+      structuredQuery: {
+        from: [{ collectionId: "nightrun_registrations" }],
+        where: filters.length > 1 ? { compositeFilter: { op: "AND", filters } } : filters[0],
+      },
+    },
+  };
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const rows = await res.json().catch(() => []);
+  const agg = rows?.[0]?.result?.aggregateFields?.total;
+  return Number(agg?.integerValue ?? agg?.doubleValue ?? 0);
+}
+
+function buildOperationalSummaryText(summary, totalConfirmadas, yesterdayLabel, nowUtcMs, balances = {}) {
+  const DIV = "━━━━━━━━━━━━━━━";
+  const cuponsEntries = Object.entries(summary.cupons).sort((a, b) => (b[1].count || 0) - (a[1].count || 0));
+  const cuponsLinhas = cuponsEntries.length
+    ? cuponsEntries.map(([code, info]) => `• ${code}: *${info.count}*  —  ${formatBRL(info.valorCents)}`).join("\n")
+    : "• Nenhum cupom usado no dia.";
+  const geradoEm = new Date(nowUtcMs - BR_OFFSET_MS);
+  const geradoStr = `${String(geradoEm.getUTCDate()).padStart(2, "0")}/${String(geradoEm.getUTCMonth() + 1).padStart(2, "0")}/${geradoEm.getUTCFullYear()} ${String(geradoEm.getUTCHours()).padStart(2, "0")}:${String(geradoEm.getUTCMinutes()).padStart(2, "0")}`;
+  const nomes = Array.isArray(summary.confirmadosNomes) ? summary.confirmadosNomes : [];
+  const nomesLinhas = nomes.length
+    ? nomes.map((item, i) => {
+        const nome = typeof item === "string" ? item : item.nome;
+        const hora = typeof item === "string" ? "" : item.hora;
+        return `${String(i + 1).padStart(2, "0")}. ${nome}${hora ? ` (${hora})` : ""}`;
+      }).join("\n")
+    : "• Nenhum confirmado no dia.";
+  const balanceItem = (label, balance) => (!balance || balance.ok === false)
+    ? `• ${label}: indisponivel`
+    : `• ${label}: *${formatBRL(balance.balanceCents)}*`;
+  const semCupom = summary.semCupom || { count: 0, valorCents: 0 };
+  const saldoHeader = balances.asOf ? `*SALDO EM CAIXA* _(${balances.asOf})_` : "*SALDO EM CAIXA*";
+
+  return [
+    "*RESUMO OPERACIONAL*",
+    "MCU NIGHT RUN 2026",
+    `_${yesterdayLabel}_`,
+    DIV,
+    "*MOVIMENTO DO DIA*",
+    `• Inscricoes feitas: *${summary.confirmadasDoDia}*`,
+    `• Arrecadado no dia: *${formatBRL(summary.arrecadado)}*`,
+    DIV,
+    "*CUPONS USADOS*",
+    cuponsLinhas,
+    "",
+    "*SEM CUPOM*",
+    `• ${semCupom.count} inscricoes  —  ${formatBRL(semCupom.valorCents)}`,
+    DIV,
+    saldoHeader,
+    balanceItem("Cora", balances.cora),
+    balanceItem("Asaas", balances.asaas),
+    DIV,
+    `*TOTAL CONFIRMADAS (geral):* *${totalConfirmadas}*`,
+    DIV,
+    `*CONFIRMADOS DO DIA (${nomes.length})*`,
+    nomesLinhas,
+    DIV,
+    `_Gerado em ${geradoStr}_`,
+  ].join("\n");
+}
+
+async function getBankBalances(env) {
+  const [asaasResult, coraResult] = await Promise.allSettled([getAsaasBalance(env), getCoraBalance(env)]);
+  return {
+    asaas: asaasResult.status === "fulfilled" ? asaasResult.value : { ok: false },
+    cora: coraResult.status === "fulfilled" ? coraResult.value : { ok: false },
+  };
+}
+
+// Guarda o saldo do fim do dia (chamado as 23:59 BR) para o resumo do dia seguinte.
+async function snapshotDailyBalances(env, dateStr) {
+  const b = await getBankBalances(env);
+  const payload = {
+    coraCents: b.cora?.ok ? b.cora.balanceCents : 0,
+    coraOk: Boolean(b.cora?.ok),
+    asaasCents: b.asaas?.ok ? b.asaas.balanceCents : 0,
+    asaasOk: Boolean(b.asaas?.ok),
+    at: new Date().toISOString(),
+  };
+  if (env.NIGHTRUN_STORAGE) {
+    await env.NIGHTRUN_STORAGE.put(`balance:snapshot:${dateStr}`, JSON.stringify(payload), { expirationTtl: 60 * 86400 });
+  }
+  return payload;
+}
+
+async function maybeSnapshotBalances(env) {
+  const ctx = brDayContext(Date.now());
+  if (ctx.nowHM !== "23:59") return { skipped: "not_time" };
+  if (!env.NIGHTRUN_STORAGE) return { skipped: "no_kv" };
+  const lockKey = `balance:snap:lock:${ctx.todayStr}`;
+  if (await env.NIGHTRUN_STORAGE.get(lockKey)) return { skipped: "locked" };
+  await env.NIGHTRUN_STORAGE.put(lockKey, "1", { expirationTtl: 7200 });
+  return { snapshot: await snapshotDailyBalances(env, ctx.todayStr) };
+}
+
+// Saldo do relatorio: usa o snapshot de 23:59 daquele dia (dateStr). Se a data for hoje e ainda
+// nao houver snapshot, usa o saldo ao vivo. Se for uma data passada sem snapshot, marca indisponivel
+// (mostrar o saldo atual seria enganoso para uma data que ja passou).
+async function resolveReportBalances(env, dateStr, shortLabel, todayStr) {
+  if (env.NIGHTRUN_STORAGE) {
+    const raw = await env.NIGHTRUN_STORAGE.get(`balance:snapshot:${dateStr}`);
+    if (raw) {
+      try {
+        const s = JSON.parse(raw);
+        return {
+          cora: { ok: s.coraOk !== false, balanceCents: s.coraCents },
+          asaas: { ok: s.asaasOk !== false, balanceCents: s.asaasCents },
+          asOf: `23:59 de ${shortLabel}`,
+        };
+      } catch (e) { /* cai para as regras abaixo */ }
+    }
+  }
+  if (dateStr === todayStr) {
+    const live = await getBankBalances(env);
+    return { ...live, asOf: "agora" };
+  }
+  return { cora: { ok: false }, asaas: { ok: false }, asOf: `sem registro de ${shortLabel}` };
+}
+
+// Monta os dados (resumo + saldos + banner) para uma data BR especifica, sem enviar.
+async function buildOperationalReport(env, range, todayStr) {
+  const [summary, totalConfirmadas, balances] = await Promise.all([
+    computeDailySummary(env, range.startIso, range.endIso),
+    countConfirmedRegistrations(env, range.endIso),
+    resolveReportBalances(env, range.dateStr, range.shortLabel, todayStr),
+  ]);
+  const text = buildOperationalSummaryText(summary, totalConfirmadas, range.label, Date.now(), balances);
+  return { summary, totalConfirmadas, balances, text };
+}
+
+// Monta e envia o resumo de uma data BR especifica: UMA UNICA mensagem (imagem com a data + legenda completa).
+async function sendOperationalReport(env, cfg, range, todayStr) {
+  const report = await buildOperationalReport(env, range, todayStr);
+  const phoneFmt = formatPhoneForWhatsApp(String(cfg.phone || ""));
+  const instanceName = String(cfg.instanceName || "");
+
+  let imageUrl;
+  try {
+    const png = await generateOperationalBannerPng(env, range.shortLabel);
+    imageUrl = pngToDataUri(png);
+  } catch (error) {
+    console.error("[OpSummary] banner generation failed", error);
+  }
+
+  const msg = { phone: phoneFmt, text: report.text, imageUrl, instanceName, type: "operational_summary", alunoNome: "Resumo Operacional" };
+  const result = await sendMessage(msg, env).catch(err => ({ success: false, status: "ERRO", error: err.message, response: { message: err.message } }));
+  await logToFirestore(msg, result.success ? result : { ...result, status: "ERRO" }, env).catch(() => {});
+
+  return { sent: Boolean(result.success), ...report, dateLabel: range.label, error: result.success ? undefined : (result.normalizedError || result.error) };
+}
+
+// Envio automatico do dia anterior (agendado pelo cron). force=true ignora horario/lastSent (teste).
+async function runOperationalSummary(env, options = {}) {
+  const cfg = await getFirestoreDoc(env, "nightrun_settings", "operational_summary");
+  if (!cfg) return { skipped: "no_config" };
+  const phone = String(cfg.phone || "");
+  if (!options.force) {
+    if (cfg.enabled !== true) return { skipped: "disabled" };
+    if (!String(cfg.time || "") || !phone) return { skipped: "incomplete" };
+  }
+  if (!phone) return { skipped: "no_phone" };
+
+  const ctx = brDayContext(Date.now());
+  if (!options.force) {
+    if (ctx.nowHM !== String(cfg.time)) return { skipped: "not_time", nowHM: ctx.nowHM, target: cfg.time };
+    if (String(cfg.lastSentDate || "") === ctx.todayStr) return { skipped: "already_sent_today" };
+    // Trava anti-duplicidade no minuto (o cron roda a cada minuto).
+    if (env.NIGHTRUN_STORAGE) {
+      const lockKey = `opsummary:lock:${ctx.todayStr}`;
+      if (await env.NIGHTRUN_STORAGE.get(lockKey)) return { skipped: "locked" };
+      await env.NIGHTRUN_STORAGE.put(lockKey, "1", { expirationTtl: 7200 });
+    }
+  }
+
+  const range = brRangeForDate(ctx.yesterdayStr);
+  const result = await sendOperationalReport(env, cfg, range, ctx.todayStr);
+
+  if (!options.force) {
+    await patchFirestoreDocument(env, `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_settings/operational_summary`, {
+      lastSentDate: { stringValue: ctx.todayStr },
+      lastSentAt: { timestampValue: new Date().toISOString() },
+      lastSentOk: { booleanValue: Boolean(result.sent) },
+    }).catch(() => {});
+  }
+
+  return { ...result, yesterdayLabel: range.label, preview: result.text };
+}
+
+// Envio manual para uma data escolhida (hoje ou passada). Nao mexe na trava do envio automatico.
+async function runManualOperationalSummary(env, dateStr) {
+  const cfg = await getFirestoreDoc(env, "nightrun_settings", "operational_summary");
+  if (!cfg) return { skipped: "no_config" };
+  if (!String(cfg.phone || "")) return { skipped: "no_phone" };
+  const ctx = brDayContext(Date.now());
+  const range = brRangeForDate(dateStr);
+  const result = await sendOperationalReport(env, cfg, range, ctx.todayStr);
+  return { ...result, preview: result.text };
 }
 
 async function getBase64FromUrl(url) {

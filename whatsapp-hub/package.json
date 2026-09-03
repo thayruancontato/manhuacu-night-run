@@ -1,0 +1,22 @@
+{
+  "name": "whatsapp-hub",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply whatsapp_hub_db --local",
+    "migrate:remote": "wrangler d1 migrations apply whatsapp_hub_db --remote"
+  },
+  "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
+    "hono": "^4.6.14",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260828.1",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.51.0"
+  }
+}

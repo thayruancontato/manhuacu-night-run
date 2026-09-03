@@ -1417,12 +1417,248 @@ html, body, #root {
   color: #dc2626;
 }
 
+.admin-inscrito-status.free {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+/* Inscrição gratuita (cupom 100%) - destaque visual na lista */
+.admin-inscrito-row.is-free {
+  background: linear-gradient(90deg, rgba(124, 58, 237, 0.06), transparent 60%);
+  box-shadow: inset 4px 0 0 #7c3aed;
+}
+
+.admin-inscrito-row.is-free:hover,
+.admin-inscrito-row.is-free:focus-visible {
+  background: linear-gradient(90deg, rgba(124, 58, 237, 0.12), #f8fbff 60%);
+  box-shadow: inset 4px 0 0 #7c3aed;
+}
+
+.admin-inscrito-free-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ede9fe;
+  color: #6d28d9;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  vertical-align: middle;
+}
+
 .admin-inscritos-empty {
   color: #94a3b8;
   font-size: 0.95rem;
   font-weight: 800;
   padding: 72px 24px;
   text-align: center;
+}
+
+/* Lista de inscrições em formato de cards (estilo #EUVOU) */
+.admin-inscritos-list--cards {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.admin-inscritos-list--cards .admin-card-euvou-grid {
+  padding: 4px;
+}
+
+.admin-inscrito-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-inscrito-card:hover,
+.admin-inscrito-card:focus-visible {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.14);
+  border-color: #6bff2a;
+  outline: none;
+}
+
+.admin-inscrito-card.is-free {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 1px #7c3aed, 0 8px 20px rgba(124, 58, 237, 0.18);
+}
+
+.admin-inscrito-card-image {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  background: #020a22;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.admin-inscrito-card-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.admin-inscrito-card-placeholder {
+  color: #6bff2a;
+  font-size: 2.2rem;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.admin-inscrito-card-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+.admin-inscrito-card-badge.paid {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.admin-inscrito-card-badge.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.admin-inscrito-card-badge.cancelled {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.admin-inscrito-card-badge.free {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.admin-inscrito-card-free {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(124, 58, 237, 0.92);
+  color: #fff;
+  font-size: 0.64rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.admin-inscrito-card-info {
+  padding: 14px 16px 16px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-inscrito-card-info strong,
+.admin-inscrito-card-info span,
+.admin-inscrito-card-info small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-inscrito-card-info strong {
+  color: #071a45;
+  font-size: 0.98rem;
+  font-weight: 900;
+}
+
+.admin-inscrito-card-info span {
+  color: #475569;
+  margin-top: 4px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.admin-inscrito-card-info small {
+  color: #94a3b8;
+  margin-top: 4px;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.admin-inscrito-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.admin-inscrito-card-foot span {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.admin-inscrito-card-foot span:last-child {
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.admin-inscrito-card-send {
+  margin-top: 12px;
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  font-weight: 900;
+  cursor: pointer;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+.admin-inscrito-card-send.euvou {
+  background: #25d366;
+  color: #071a45;
+}
+
+.admin-inscrito-card-send.cobrar {
+  background: #f59e0b;
+  color: #071a45;
+}
+
+.admin-inscrito-card-send:hover {
+  filter: brightness(0.96);
+}
+
+.admin-inscrito-card-send:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
 @media (max-width: 820px) {

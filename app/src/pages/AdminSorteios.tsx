@@ -1,21 +1,30 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, doc, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { addDoc, collection, getDocs, doc, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Gift, Plus, Edit, Trash2, Trophy, Eye, ToggleLeft, ToggleRight, UploadCloud, Download } from 'lucide-react';
+import { Gift, Plus, Edit, Trash2, Trophy, Eye, ToggleLeft, ToggleRight, UploadCloud, Download, Radio, ChevronRight } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import PageTitle from '../components/PageTitle';
 import { useDialog } from '../context/CustomDialogContext';
 import LoadingModal from '../components/LoadingModal';
 import { FormField, FormLabel, FormInput, FormTextarea, FormSwitch, FormActions, FormSelect, FormGrid, Tabs, FormHeader } from '../components/AdminForm';
 import WinnerExperience from '../components/WinnerExperience';
-import { formatDateBR } from '../utils/dateUtils';
+import { formatDateBR, formatDateTimeBR } from '../utils/dateUtils';
+import { generateOperatorToken, readGanhadores, sorteioStatusInfo } from '../utils/sorteioUtils';
 import '../App.css';
 
 export default function AdminSorteios() {
+  const navigate = useNavigate();
   const [config, setConfig] = useState<any>(null);
   const [ganhadores, setGanhadores] = useState<any[]>([]);
+  const [sorteios, setSorteios] = useState<any[]>([]);
+  const [creatingSorteio, setCreatingSorteio] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('config');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'sorteios';
+  const setActiveTab = (tab: string) => {
+    setSearchParams(tab === 'sorteios' ? {} : { tab }, { replace: false });
+  };
   const [simulating, setSimulating] = useState(false);
   const [simulatedAthlete, setSimulatedAthlete] = useState<any>(null);
   const [simulatedPrize, setSimulatedPrize] = useState<any>(null);
@@ -52,7 +61,7 @@ export default function AdminSorteios() {
         setConfig(data);
         setFrequencia(data.frequencia || 50);
         setTipoRegra(data.tipoRegra || 'frequencia');
-        setNumerosEspecificos(data.numerosEspecificos.join(', ') || '');
+        setNumerosEspecificos((data.numerosEspecificos || []).join(', ') || '');
         setInstrucoes(data.instrucoes || '');
         setAtivo(data.ativo || false);
         setGanhoGarantido(data.ganhoGarantido || false);
@@ -63,12 +72,54 @@ export default function AdminSorteios() {
       const qGanhadores = query(collection(db, 'nightrun_sorteios_ganhadores'), orderBy('dataHora', 'desc'));
       const snapGanhadores = await getDocs(qGanhadores);
       setGanhadores(snapGanhadores.docs.map(d => ({ id: d.id, ...d.data() })));
-      
+
+      // Load Sorteios (eventos com página própria)
+      await loadSorteios();
+
     } catch (err) {
       console.error(err);
       showAlert('Erro ao carregar dados dos sorteios', 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadSorteios = async () => {
+    try {
+      const snap = await getDocs(query(collection(db, 'nightrun_sorteios'), orderBy('createdAt', 'desc')));
+      setSorteios(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error('Erro ao carregar sorteios:', err);
+    }
+  };
+
+  const handleCreateSorteio = async () => {
+    setCreatingSorteio(true);
+    try {
+      const ref = await addDoc(collection(db, 'nightrun_sorteios'), {
+        titulo: 'Novo sorteio',
+        descricao: '',
+        premioNome: '',
+        premioImagem: '',
+        dataPrevista: '',
+        status: 'agendado',
+        tipo: 'geral',
+        couponCode: '',
+        quantidadeGanhadores: 1,
+        ganhadores: [],
+        ganhadorIds: [],
+        totalElegiveis: 0,
+        sorteadoEm: null,
+        operatorToken: generateOperatorToken(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      navigate(`/admin/sorteios/${ref.id}`);
+    } catch (err) {
+      console.error(err);
+      showAlert('Erro ao criar o sorteio.', 'error');
+    } finally {
+      setCreatingSorteio(false);
     }
   };
 
@@ -116,7 +167,7 @@ export default function AdminSorteios() {
     try {
       setLoading(true);
       const docRef = doc(db, 'nightrun_sorteios_config', config.id);
-      const novoStatus = !config.ativo;
+      const novoStatus = !config?.ativo;
       await setDoc(docRef, { ativo: novoStatus }, { merge: true });
       setConfig({ ...config, ativo: novoStatus });
       setAtivo(novoStatus);
@@ -380,11 +431,11 @@ export default function AdminSorteios() {
           onClick={toggleAtivo}
           style={{ background: '#fff', padding: 24, borderRadius: 24, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', cursor: 'pointer', transition: 'all 0.2s' }}
         >
-          <div style={{ width: 52, height: 52, borderRadius: 14, background: config.ativo ? '#dcfce7' : '#fee2e2', color: config.ativo ? '#166534' : '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {config.ativo ? <ToggleRight size={30} /> : <ToggleLeft size={30} />}
+          <div style={{ width: 52, height: 52, borderRadius: 14, background: config?.ativo ? '#dcfce7' : '#fee2e2', color: config?.ativo ? '#166534' : '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {config?.ativo ? <ToggleRight size={30} /> : <ToggleLeft size={30} />}
           </div>
           <div>
-            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900, color: config.ativo ? '#166534' : '#ef4444' }}>{config.ativo ? 'ATIVO' : 'DESATIVADO'}</h3>
+            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900, color: config?.ativo ? '#166534' : '#ef4444' }}>{config?.ativo ? 'ATIVO' : 'DESATIVADO'}</h3>
             <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status do Sorteio</p>
           </div>
         </div>
@@ -394,6 +445,7 @@ export default function AdminSorteios() {
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', padding: '0 20px', overflowX: 'auto', background: '#f8fafc' }}>
           {[
+            { id: 'sorteios', label: 'SORTEIOS', icon: <Radio size={18} /> },
             { id: 'premios', label: 'PRÊMIOS', icon: <Gift size={18} /> },
             { id: 'config', label: 'REGRAS', icon: <Edit size={18} /> },
             { id: 'teste', label: 'SIMULAÇÃO', icon: <Eye size={18} /> },
@@ -418,6 +470,77 @@ export default function AdminSorteios() {
         </div>
 
         <div style={{ padding: '32px' }}>
+          {activeTab === 'sorteios' && (
+            <div style={{ animation: 'fadeIn 0.3s ease' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 16, flexWrap: 'wrap' }}>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 900, color: '#071A45', margin: 0 }}>Histórico de sorteios</h3>
+                <button
+                  onClick={handleCreateSorteio}
+                  disabled={creatingSorteio}
+                  style={{ background: '#071A45', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 10, fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+                >
+                  <Plus size={18} /> {creatingSorteio ? 'CRIANDO...' : 'NOVO SORTEIO'}
+                </button>
+              </div>
+              <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: 24, lineHeight: 1.5 }}>
+                Cada sorteio tem a sua própria página pública para o público acompanhar ao vivo. Clique em um item para configurar o prêmio, controlar o status e enviar o resultado ao ganhador.
+              </p>
+
+              {sorteios.length === 0 ? (
+                <div style={{ padding: 70, textAlign: 'center', color: '#94a3b8', fontWeight: 700, background: '#f8fafc', borderRadius: 20, border: '1px dashed #cbd5e1' }}>
+                  <Radio size={34} color="#cbd5e1" />
+                  <p style={{ margin: '12px 0 0' }}>Nenhum sorteio criado ainda.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {sorteios.map(s => {
+                    const info = sorteioStatusInfo(s.status);
+                    const isLive = s.status === 'acontecendo';
+                    const vencedores = readGanhadores(s);
+                    return (
+                      <div
+                        key={s.id}
+                        onClick={() => navigate(`/admin/sorteios/${s.id}`)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 16, padding: 16,
+                          background: isLive ? '#fffbeb' : '#fff',
+                          border: `1px solid ${isLive ? '#fde68a' : '#e2e8f0'}`,
+                          borderRadius: 18, cursor: 'pointer', transition: 'all 0.16s ease',
+                        }}
+                      >
+                        <div style={{ width: 62, height: 62, borderRadius: 14, flexShrink: 0, background: s.premioImagem ? `url(${s.premioImagem}) center/cover` : '#f1f5f9', display: 'grid', placeItems: 'center' }}>
+                          {!s.premioImagem && <Gift size={24} color="#cbd5e1" />}
+                        </div>
+
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <strong style={{ color: '#071A45', fontSize: '1rem' }}>{s.titulo || 'Sorteio sem título'}</strong>
+                            <span style={{ padding: '3px 10px', borderRadius: 999, background: `${info.color}1a`, color: info.color, fontSize: '0.65rem', fontWeight: 900, textTransform: 'uppercase' }}>
+                              {info.label}
+                            </span>
+                          </div>
+                          <div style={{ color: '#64748b', fontSize: '0.8rem', fontWeight: 700, marginTop: 4 }}>
+                            {s.premioNome || 'Prêmio não definido'}
+                            {s.tipo === 'cupom' && <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 999, background: '#ede9fe', color: '#6d28d9', fontSize: '0.65rem', fontWeight: 900 }}>CUPOM {s.couponCode}</span>}
+                          </div>
+                          <div style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: 700, marginTop: 3 }}>
+                            {vencedores.length
+                              ? `${vencedores.length > 1 ? 'Ganhadores' : 'Ganhador'}: ${vencedores.map((g: any) => g.nome).join(', ')}`
+                              : s.dataPrevista
+                                ? `Previsto para ${formatDateTimeBR(new Date(s.dataPrevista))}`
+                                : `Sem ganhador ainda · ${Math.max(1, Number(s.quantidadeGanhadores || 1))} vaga(s)`}
+                          </div>
+                        </div>
+
+                        <ChevronRight size={20} color="#cbd5e1" />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === 'premios' && (
             <div style={{ animation: 'fadeIn 0.3s ease' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>

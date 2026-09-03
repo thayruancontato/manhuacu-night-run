@@ -7,11 +7,13 @@ import {
   Download, Search, Filter, Eye, ChevronLeft, ChevronRight,
   Calendar, ArrowRight, ArrowDownLeft, ArrowUpRight, CreditCard
 } from 'lucide-react';
-import { KITS } from '../types';
+import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import AdminStatCard from '../components/admin/AdminStatCard';
 import AdminDonutChart from '../components/admin/AdminDonutChart';
 import AdminLineChart from '../components/admin/AdminLineChart';
 import AdminSparkline from '../components/admin/AdminSparkline';
+import FinanceCalendar from '../components/admin/FinanceCalendar';
+import PendingCreditCalendar from '../components/admin/PendingCreditCalendar';
 import { useDialog } from '../context/CustomDialogContext';
 import { exportToCSV } from '../utils/exportUtils';
 import { formatDateBR, formatDateTimeBR } from '../utils/dateUtils';
@@ -44,9 +46,11 @@ export default function AdminFinanceiro() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('todos');
   const [filterKit, setFilterKit] = useState('todos');
+  const [kitsCadastrados, setKitsCadastrados] = useState<KitRecord[]>([]);
   const [bankBalances, setBankBalances] = useState<any>(null);
   const [bankMovements, setBankMovements] = useState<any>(null);
   const [loadingBalances, setLoadingBalances] = useState(false);
+  const [showCreditCalendar, setShowCreditCalendar] = useState(false);
   const [loadingMovements, setLoadingMovements] = useState(false);
   
   // Pagination state
@@ -60,6 +64,7 @@ export default function AdminFinanceiro() {
   };
 
   useEffect(() => { load(); }, []);
+  useEffect(() => { fetchKits().then(setKitsCadastrados).catch(e => console.error('Erro ao carregar kits', e)); }, []);
   useEffect(() => { loadBankBalances(); }, []);
   useEffect(() => { loadBankMovements(); }, []);
 
@@ -237,7 +242,7 @@ export default function AdminFinanceiro() {
             date,
             amount: Number(registration.amount || 0),
             title: registration.nome || 'Atleta',
-            description: KITS.find(k => k.id === registration.kit)?.nome || registration.kit || 'Inscricao',
+            description: resolveKitNome(kitsCadastrados, registration.kit, registration.kitNome) || 'Inscricao',
           },
           saida: fee > 0 ? {
             id: `${registration.id}-saida`,
@@ -376,7 +381,7 @@ export default function AdminFinanceiro() {
       { header: 'Nome', key: 'nome' },
       { header: 'CPF', key: 'cpf' },
       { header: 'E-mail', key: 'email' },
-      { header: 'Kit', key: 'kit', transform: (v) => KITS.find(k => k.id === v)?.nome || v },
+      { header: 'Kit', key: 'kit', transform: (v) => resolveKitNome(kitsCadastrados, v) },
       { header: 'Valor (R$)', key: 'amount', transform: (v) => (v / 100).toFixed(2) },
       { header: 'Status Pagamento', key: 'paymentStatus' },
       { header: 'Data Inscrição', key: 'createdAt', transform: (v) => formatDateBR(v, '') }
@@ -440,6 +445,18 @@ export default function AdminFinanceiro() {
           <div style={{ background: '#fff', border: '1px solid #e2e8f0', color: '#475569', padding: '10px 20px', borderRadius: 12, fontWeight: 700, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 8 }}>
             <Calendar size={16} /> 01/05/2026 - 31/07/2026
           </div>
+          <button
+            onClick={() => navigate('/admin/financeiro/faturas')}
+            style={{ background: '#fff', border: '1px solid #cbd5e1', color: '#071A45', padding: '10px 16px', borderRadius: 10, fontWeight: 900, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+          >
+            <CreditCard size={16} /> Faturas
+          </button>
+          <button
+            onClick={() => navigate('/admin/financeiro/relatorios')}
+            style={{ background: '#fff', border: '1px solid #cbd5e1', color: '#071A45', padding: '10px 16px', borderRadius: 10, fontWeight: 900, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+          >
+            <Download size={16} /> Relatorios
+          </button>
           <button 
             onClick={handleExport}
             style={{ background: '#071A45', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
@@ -450,9 +467,9 @@ export default function AdminFinanceiro() {
       </div>
 
       {/* Stats Quick Row */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 28, flexWrap: 'wrap' }}>
+      <div className="finance-summary-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 28 }}>
         {loading ? Array.from({ length: 4 }).map((_, i) => (
-          <SkeletonCard key={i} style={{ flex: 1, minWidth: 240 }}>
+          <SkeletonCard key={i}>
             <div className="ui-skeleton-stat-top">
               <SkeletonBlock width={42} height={42} radius={12} />
               <SkeletonBlock width={80} height={24} radius={999} />
@@ -466,35 +483,35 @@ export default function AdminFinanceiro() {
             </div>
           </SkeletonCard>
         )) : [
-          { label: 'Receita Total', value: fmt(stats.total), net: fmt(stats.totalLiquido), icon: Wallet, color: '#22c55e', sub: 'Valor total arrecadado', provider: stats.totalByProvider, providerNet: stats.totalNetByProvider },
-          { label: 'Pendente', value: fmt(stats.pendente), net: fmt(stats.pendenteLiquido), icon: Clock, color: '#f59e0b', sub: stats.percPendente + '% do total', provider: stats.pendenteByProvider, providerNet: stats.pendenteNetByProvider },
-          { label: 'Recebido', value: fmt(stats.recebido), net: fmt(stats.recebidoLiquido), icon: CheckCircle, color: '#3b82f6', sub: stats.percRecebido + '% do total', provider: stats.recebidoByProvider, providerNet: stats.recebidoNetByProvider },
-          { label: 'Cancelado', value: fmt(stats.cancelado), net: fmt(stats.canceladoLiquido), icon: AlertCircle, color: '#ef4444', sub: stats.percCancelado + '% do total', provider: stats.canceladoByProvider, providerNet: stats.canceladoNetByProvider }
+          { label: 'Receita Total', value: fmt(stats.total), net: fmt(stats.totalLiquido), icon: Wallet, color: '#071A45', bg: '#111c32', fg: '#fff', sub: 'Valor total arrecadado', provider: stats.totalByProvider, providerNet: stats.totalNetByProvider },
+          { label: 'Recebido', value: fmt(stats.recebido), net: fmt(stats.recebidoLiquido), icon: CheckCircle, color: '#10b981', bg: '#10b981', fg: '#fff', sub: stats.percRecebido + '% do total', provider: stats.recebidoByProvider, providerNet: stats.recebidoNetByProvider },
+          { label: 'Pendente', value: fmt(stats.pendente), net: fmt(stats.pendenteLiquido), icon: Clock, color: '#f59e0b', bg: '#fff', fg: '#071A45', sub: stats.percPendente + '% do total', provider: stats.pendenteByProvider, providerNet: stats.pendenteNetByProvider },
+          { label: 'Cancelado', value: fmt(stats.cancelado), net: fmt(stats.canceladoLiquido), icon: AlertCircle, color: '#ef4444', bg: '#fff', fg: '#071A45', sub: stats.percCancelado + '% do total', provider: stats.canceladoByProvider, providerNet: stats.canceladoNetByProvider }
         ].map((s, i) => (
-          <div key={i} style={{ background: '#fff', flex: 1, minWidth: 240, padding: '20px', borderRadius: 20, border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+          <div key={i} className="finance-summary-card" style={{ background: s.bg, minHeight: 170, padding: '20px 18px', borderRadius: 0, border: s.bg === '#fff' ? '1px solid #eef2f7' : 'none', borderLeft: `5px solid ${s.color}`, boxShadow: '0 10px 24px rgba(15,23,42,0.06)', color: s.fg }}>
              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 12, background: `${s.color}15`, color: s.color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: 38, height: 38, borderRadius: 10, background: s.bg === '#fff' ? `${s.color}15` : 'rgba(255,255,255,.14)', color: s.bg === '#fff' ? s.color : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <s.icon size={22} />
                 </div>
-                <div style={{ width: 80, height: 24 }}><AdminSparkline data={sparklineData(100)} color={s.color} /></div>
+                <div style={{ width: 80, height: 24 }}><AdminSparkline data={sparklineData(100)} color={s.bg === '#fff' ? s.color : '#fff'} /></div>
              </div>
              <div>
-               <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: 4 }}>{s.label}</div>
-               <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#071A45', marginBottom: 2 }}>{s.value}</div>
-               <div style={{ fontSize: '0.68rem', fontWeight: 800, color: '#94a3b8', marginBottom: 4 }}>Líquido: {s.net}</div>
-               <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#94a3b8' }}>{s.sub}</div>
+               <div style={{ fontSize: '0.72rem', fontWeight: 950, color: s.bg === '#fff' ? '#4b5563' : 'rgba(255,255,255,.82)', textTransform: 'uppercase', marginBottom: 12, lineHeight: 1.25 }}>{s.label}</div>
+               <div style={{ fontSize: '1.55rem', fontWeight: 950, color: s.fg, marginBottom: 8, lineHeight: 1.05 }}>{s.value}</div>
+               <div style={{ fontSize: '0.72rem', fontWeight: 900, color: s.bg === '#fff' ? '#475569' : 'rgba(255,255,255,.86)', marginBottom: 4 }}>Liquido: {s.net}</div>
+               <div style={{ fontSize: '0.72rem', fontWeight: 800, color: s.bg === '#fff' ? '#64748b' : 'rgba(255,255,255,.78)' }}>{s.sub}</div>
                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
-                 <div style={{ background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 10, padding: '7px 8px' }}>
-                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#64748b', fontSize: '0.62rem', fontWeight: 900, textTransform: 'uppercase', marginBottom: 3 }}>
+                 <div style={{ background: s.bg === '#fff' ? '#f8fafc' : 'rgba(255,255,255,.1)', border: `1px solid ${s.bg === '#fff' ? '#eef2f7' : 'rgba(255,255,255,.14)'}`, borderRadius: 8, padding: '7px 8px' }}>
+                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: s.bg === '#fff' ? '#64748b' : '#fff', fontSize: '0.62rem', fontWeight: 900, textTransform: 'uppercase', marginBottom: 3 }}>
                      <img src="/cora-logo.svg" alt="Cora" style={{ width: 34, height: 15, objectFit: 'contain' }} />
                    </div>
-                   <strong style={{ color: '#071A45', fontSize: '0.76rem', fontWeight: 900 }}>{fmt(s.provider.cora)}</strong>
+                   <strong style={{ color: s.fg, fontSize: '0.76rem', fontWeight: 950 }}>{fmt(s.provider.cora)}</strong>
                  </div>
-                 <div style={{ background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 10, padding: '7px 8px' }}>
-                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#64748b', fontSize: '0.62rem', fontWeight: 900, textTransform: 'uppercase', marginBottom: 3 }}>
+                 <div style={{ background: s.bg === '#fff' ? '#f8fafc' : 'rgba(255,255,255,.1)', border: `1px solid ${s.bg === '#fff' ? '#eef2f7' : 'rgba(255,255,255,.14)'}`, borderRadius: 8, padding: '7px 8px' }}>
+                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: s.bg === '#fff' ? '#64748b' : '#fff', fontSize: '0.62rem', fontWeight: 900, textTransform: 'uppercase', marginBottom: 3 }}>
                      <img src="/asaas-logo.svg" alt="Asaas" style={{ width: 42, height: 15, objectFit: 'contain' }} />
                    </div>
-                   <strong style={{ color: '#071A45', fontSize: '0.76rem', fontWeight: 900 }}>{fmt(s.provider.asaas)}</strong>
+                   <strong style={{ color: s.fg, fontSize: '0.76rem', fontWeight: 950 }}>{fmt(s.provider.asaas)}</strong>
                  </div>
                </div>
              </div>
@@ -587,7 +604,7 @@ export default function AdminFinanceiro() {
                 <strong style={{ color: '#071A45', fontSize: '1.45rem', fontWeight: 950 }}>{fmtBankBalance(safeBankBalances.cora, 'cora')}</strong>
               )}
               <div style={{ marginTop: 8, color: '#64748b', fontSize: '.76rem', fontWeight: 900, textTransform: 'uppercase' }}>
-                Confirmado: <span style={{ color: '#071A45' }}>{fmt(stats.recebidoByProvider.cora)}</span>
+                Confirmado no sistema: <span style={{ color: '#071A45' }}>{fmt(stats.recebidoByProvider.cora)}</span>
               </div>
               {!safeBankBalances.cora.ok && safeBankBalances.cora.error && <div style={{ color: '#ef4444', fontSize: '.72rem', fontWeight: 700, marginTop: 6 }}>{safeBankBalances.cora.error}</div>}
             </div>
@@ -609,8 +626,29 @@ export default function AdminFinanceiro() {
                 <strong style={{ color: '#071A45', fontSize: '1.45rem', fontWeight: 950 }}>{fmtBankBalance(safeBankBalances.asaas, 'asaas')}</strong>
               )}
               <div style={{ marginTop: 8, color: '#64748b', fontSize: '.76rem', fontWeight: 900, textTransform: 'uppercase' }}>
-                Confirmado: <span style={{ color: '#071A45' }}>{fmt(stats.recebidoByProvider.asaas)}</span>
+                Confirmado no sistema: <span style={{ color: '#071A45' }}>{fmt(stats.recebidoByProvider.asaas)}</span>
               </div>
+              {safeBankBalances.asaas?.pendingCredit?.ok && (
+                <div style={{ marginTop: 10, padding: '9px 10px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 10 }}>
+                  <span style={{ display: 'block', color: '#9a3412', fontSize: '.66rem', fontWeight: 950, textTransform: 'uppercase' }}>
+                    Cartao confirmado a creditar no Asaas
+                  </span>
+                  <strong style={{ display: 'block', color: '#c2410c', fontSize: '.9rem', fontWeight: 950, marginTop: 2 }}>
+                    {fmt(Number(safeBankBalances.asaas.pendingCredit.amountCents || 0))}
+                  </strong>
+                  <span style={{ display: 'block', color: '#9a3412', fontSize: '.68rem', fontWeight: 800, marginTop: 2 }}>
+                    {Number(safeBankBalances.asaas.pendingCredit.count || 0)} pagamento(s) direto do Asaas
+                  </span>
+                  {Array.isArray(safeBankBalances.asaas.pendingCredit.items) && safeBankBalances.asaas.pendingCredit.items.length > 0 && (
+                    <button
+                      onClick={() => setShowCreditCalendar(true)}
+                      style={{ marginTop: 8, border: 'none', background: '#c2410c', color: '#fff', padding: '6px 10px', borderRadius: 8, fontWeight: 900, fontSize: '.68rem', cursor: 'pointer', textTransform: 'uppercase' }}
+                    >
+                      Ver calendário completo
+                    </button>
+                  )}
+                </div>
+              )}
               {!safeBankBalances.asaas.ok && safeBankBalances.asaas.error && <div style={{ color: '#ef4444', fontSize: '.72rem', fontWeight: 700, marginTop: 6 }}>{safeBankBalances.asaas.error}</div>}
             </div>
             <button onClick={loadBankBalances} disabled={loadingBalances} style={{ background: '#f1f5f9', border: 'none', color: '#475569', padding: '8px 10px', borderRadius: 10, fontWeight: 900, cursor: loadingBalances ? 'wait' : 'pointer' }}>
@@ -708,6 +746,9 @@ export default function AdminFinanceiro() {
         </div>
       </div>
 
+      {/* Calendário de recebimentos */}
+      <FinanceCalendar regs={regs} getDate={movementDateOf} loading={loading} />
+
       {/* Charts Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24, marginBottom: 32 }}>
         <div style={{ background: '#fff', borderRadius: 24, border: '1px solid #e2e8f0', padding: 24 }}>
@@ -779,7 +820,7 @@ export default function AdminFinanceiro() {
             <div style={{ position: 'relative', minWidth: 140 }}>
               <select value={filterKit} onChange={e => setFilterKit(e.target.value)} style={{ width: '100%', padding: '14px 16px', borderRadius: 14, border: '1px solid #e2e8f0', fontSize: '0.85rem', fontWeight: 700, color: '#071A45', outline: 'none', cursor: 'pointer', background: '#fff', appearance: 'none' }}>
                 <option value="todos">Kit</option>
-                {KITS.map(k => <option key={k.id} value={k.id}>{k.nome}</option>)}
+                {kitsCadastrados.map(k => <option key={k.id} value={k.id}>{k.nome}</option>)}
               </select>
               <div style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#94a3b8' }}><Filter size={14} /></div>
             </div>
@@ -833,7 +874,7 @@ export default function AdminFinanceiro() {
                       </div>
                     </td>
                     <td style={{ padding: '16px 24px', color: '#475569', fontSize: '0.85rem', fontWeight: 600 }}>
-                      {KITS.find(k => k.id === r.kit)?.nome || r.kit}
+                      {resolveKitNome(kitsCadastrados, r.kit, r.kitNome)}
                     </td>
                     <td style={{ padding: '16px 24px', fontWeight: 800, color: '#071A45' }}>{fmt(r.amount || 0)}</td>
                     <td style={{ padding: '16px 24px' }}>
@@ -896,6 +937,13 @@ export default function AdminFinanceiro() {
           </div>
         )}
       </div>
+
+      {showCreditCalendar && safeBankBalances.asaas?.pendingCredit?.items && (
+        <PendingCreditCalendar
+          items={safeBankBalances.asaas.pendingCredit.items}
+          onClose={() => setShowCreditCalendar(false)}
+        />
+      )}
     </div>
   );
 }

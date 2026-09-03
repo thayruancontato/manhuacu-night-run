@@ -2,34 +2,34 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Função para verificar se o usuário é admin
+    // FunÃ§Ã£o para verificar se o usuÃ¡rio Ã© admin
     function isAdmin() {
       return request.auth != null && 
         exists(/databases/$(database)/documents/nightrun_admins/$(request.auth.token.email));
     }
     
-    // Configurações Gerais: Apenas Admins editam, qualquer um lê (se necessário)
+    // ConfiguraÃ§Ãµes Gerais: Apenas Admins editam, qualquer um lÃª (se necessÃ¡rio)
     match /nightrun_settings/{document} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // Configurações de Sistema (ex: WhatsApp API): Apenas Admins
+    // ConfiguraÃ§Ãµes de Sistema (ex: WhatsApp API): Apenas Admins
     match /system_settings/{document=**} {
       allow read, write: if isAdmin();
     }
     
-    // Inscrições: Público para testes
+    // InscriÃ§Ãµes: PÃºblico para testes
     match /nightrun_registrations/{document=**} {
       allow read, write: if true;
     }
     
-    // Admins: Público para testes de login
+    // Admins: PÃºblico para testes de login
     match /nightrun_admins/{document=**} {
       allow read, write: if true;
     }
 
-    // Kits e Camisetas: Leitura pública para o formulário, escrita apenas Admins
+    // Kits e Camisetas: Leitura pÃºblica para o formulÃ¡rio, escrita apenas Admins
     match /nightrun_kit_items/{itemId} {
       allow read: if true;
       allow write: if isAdmin();
@@ -38,19 +38,65 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // Kits (opcoes de kit alem do padrao, com ativacao unica e preco forcado): leitura
+    // publica para o formulario descobrir o kit ativo, escrita apenas admin.
+    match /nightrun_kits/{kitId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
     
-    // Sorteios e Mensagens: Leitura e Escrita públicas para fluxo de simulação
+    match /nightrun_discount_coupons/{couponId} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        resource.data.active != false &&
+        request.resource.data.diff(resource.data).changedKeys().hasOnly(['usedCount', 'updatedAt', 'lastUsedAt']) &&
+        request.resource.data.usedCount == resource.data.usedCount + 1 &&
+        request.resource.data.maxUses == resource.data.maxUses &&
+        request.resource.data.usedCount <= resource.data.maxUses
+      );
+    }
+
+    // Sorteios e Mensagens: Leitura e Escrita pÃºblicas para fluxo de simulaÃ§Ã£o
     match /nightrun_sorteios_config/{document=**} {
       allow read, write: if true;
     }
     match /nightrun_sorteios_ganhadores/{document=**} {
       allow read, write: if true;
     }
+
+    // Sorteios (eventos com pagina publica): leitura publica para acompanhar ao vivo.
+    // Somente o admin cria, exclui ou edita os DADOS (titulo, premio, tipo, cupom,
+    // quantidade de ganhadores, token). O coordenador com o link publico e o ganhador
+    // marcando que visualizou so conseguem mexer nos campos do resultado abaixo -
+    // qualquer tentativa de alterar os dados do sorteio e negada.
+    match /nightrun_sorteios/{sorteioId} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'status', 'ganhadores', 'ganhadorIds', 'totalElegiveis', 'sorteadoEm', 'iniciadoEm', 'updatedAt'
+        ])
+      );
+    }
     match /nightrun_messages/{document=**} {
       allow read, write: if true;
     }
 
-    // Modalidades: Leitura pública para o formulário, escrita apenas Admins
+    // Historico de disparos da mensagem de confirmacao de dados: apenas admin.
+    match /nightrun_data_confirmation_runs/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Logs de envio do WhatsApp (gravados pelo worker). Leitura apenas admin,
+    // usada para saber quem ja recebeu e nao reenviar. Escrita fica com o worker (REST/API key).
+    match /whatsapp_logs/{document=**} {
+      allow read: if isAdmin();
+    }
+
+    // Modalidades: Leitura pÃºblica para o formulÃ¡rio, escrita apenas Admins
     // Comprovantes anexados ao extrato bancario: apenas admins
     match /nightrun_bank_movement_receipts/{document=**} {
       allow read, write: if isAdmin();
@@ -59,6 +105,16 @@ service cloud.firestore {
     match /nightrun_modalidades/{modId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    // Equipes (registro oficial usado pela gestao de equipes no admin): apenas admin.
+    match /nightrun_equipes/{equipeId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Modelos salvos de planilha (filtros/colunas/resumo preferidos): apenas admin.
+    match /nightrun_planilha_modelos/{modeloId} {
+      allow read, write: if isAdmin();
     }
   }
 }

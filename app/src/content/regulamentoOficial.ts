@@ -184,6 +184,7 @@ automaticamente pelo sistema ao atingir a data limite ou o número de vagas prev
 do lote vigente. Para validar, é obrigatório anexar laudo médico atualizado que comprove a
 deficiência durante a inscrição online e apresentar o laudo original na retirada do kit. O desconto
 não é cumulativo com outras promoções.
+Pessoas com deficiência (PCD) pagam metade do valor.
 6.11.3 — Idosos com 60 anos ou mais: pagam metade do valor, conforme o Estatuto do Idoso.
 O desconto é aplicado automaticamente pela plataforma mediante informação da data de
 nascimento. Na retirada do kit é obrigatória a apresentação do documento de identidade original

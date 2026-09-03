@@ -7,12 +7,13 @@ import PageTitle from '../components/PageTitle';
 import { useDialog } from '../context/CustomDialogContext';
 import { exportToCSV } from '../utils/exportUtils';
 import { formatDateBR } from '../utils/dateUtils';
-import { KITS } from '../types';
+import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 
 export default function AdminExport() {
   const [regs, setRegs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalidades, setModalidades] = useState<any[]>([]);
+  const [kitsCadastrados, setKitsCadastrados] = useState<KitRecord[]>([]);
   const { showAlert } = useDialog();
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export default function AdminExport() {
       try {
         const modSnap = await getDocs(query(collection(db, 'nightrun_modalidades'), orderBy('nome')));
         setModalidades(modSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setKitsCadastrados(await fetchKits());
 
         const q = query(collection(db, 'nightrun_registrations'), orderBy('createdAt', 'desc'));
         const snap = await getDocs(q);
@@ -40,7 +42,7 @@ export default function AdminExport() {
       { header: 'CPF Responsável', key: 'responsavelCpf' },
       { header: 'Categoria', key: 'categoria' },
       { header: 'Modalidade', key: 'modalidadeId', transform: (v) => modalidades.find(m => m.id === v)?.nome || 'Outra' },
-      { header: 'Kit', key: 'kit', transform: (v) => KITS.find(k => k.id === v)?.nome || v },
+      { header: 'Kit', key: 'kit', transform: (v) => resolveKitNome(kitsCadastrados, v) },
       { header: 'Tamanho Camiseta', key: 'tamanhoCamiseta', transform: (v) => String(v || '').replace('BL_', 'Baby Look ') },
       { header: 'Status Pagamento', key: 'paymentStatus' },
       { header: 'Equipe', key: 'equipe' },

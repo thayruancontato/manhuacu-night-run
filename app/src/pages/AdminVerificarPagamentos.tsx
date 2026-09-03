@@ -1,9 +1,23 @@
 import type React from 'react';
-import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, RefreshCw, Send, SearchCheck, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, RefreshCw, Send, SearchCheck, Trash2, ShieldCheck, Wrench } from 'lucide-react';
 import { useDialog } from '../context/CustomDialogContext';
 import { db } from '../firebase';
 import { collection, getDocs, query, where, deleteDoc, doc } from 'firebase/firestore';
+
+type AutoReconcileLog = {
+  startedAt: string;
+  finishedAt?: string;
+  ok: boolean;
+  windowHours?: number;
+  totalChecked?: number;
+  totalFixed?: number;
+  fixed?: Array<{ registrationId: string; nome: string; provider: string; paymentMethod?: string }>;
+  failed?: Array<{ registrationId: string; reason: string }>;
+  error?: string;
+};
+
+type CreditCardFixItem = { registrationId: string; nome: string; previousProvider: string; creditCardAsaasPaymentId: string };
 
 type AuditItem = {
   registrationId: string;
@@ -55,6 +69,93 @@ export default function AdminVerificarPagamentos() {
   const [discardingId, setDiscardingId] = useState<string | null>(null);
   const [audit, setAudit] = useState<AuditResult | null>(null);
   const [paidRegistrations, setPaidRegistrations] = useState<any[]>([]);
+  const [autoReconcile, setAutoReconcile] = useState<AutoReconcileLog | null>(null);
+  const [loadingAutoReconcile, setLoadingAutoReconcile] = useState(false);
+  const [runningAutoReconcile, setRunningAutoReconcile] = useState(false);
+  const [cardFixPreview, setCardFixPreview] = useState<{ toFix: number; scanned: number; results: CreditCardFixItem[] } | null>(null);
+  const [loadingCardFix, setLoadingCardFix] = useState(false);
+  const [applyingCardFix, setApplyingCardFix] = useState(false);
+
+  const loadAutoReconcileStatus = async () => {
+    const workerUrl = import.meta.env.VITE_WORKER_URL;
+    if (!workerUrl) return;
+    setLoadingAutoReconcile(true);
+    try {
+      const res = await fetch(`${workerUrl}/payments/auto-reconcile-status`);
+      const data = await res.json().catch(() => null);
+      if (data?.success) setAutoReconcile(data.lastRun);
+    } catch (error) {
+      console.error('[AdminVerificarPagamentos] auto-reconcile status failed', error);
+    } finally {
+      setLoadingAutoReconcile(false);
+    }
+  };
+
+  useEffect(() => { loadAutoReconcileStatus(); }, []);
+
+  const runAutoReconcileNow = async () => {
+    const workerUrl = import.meta.env.VITE_WORKER_URL;
+    if (!workerUrl) return showAlert('Worker não configurado.', 'error');
+    setRunningAutoReconcile(true);
+    try {
+      const res = await fetch(`${workerUrl}/payments/auto-reconcile-run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ windowHours: 6 }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Falha ao rodar a reconciliação automática.');
+      setAutoReconcile(data);
+      showAlert(`Verificação automática concluída: ${data.totalFixed || 0} inscrição(ões) corrigida(s) de ${data.totalChecked || 0} verificada(s).`, data.totalFixed ? 'success' : 'info');
+    } catch (error: any) {
+      showAlert(error.message || 'Erro ao rodar a reconciliação automática.', 'error');
+    } finally {
+      setRunningAutoReconcile(false);
+    }
+  };
+
+  const previewCardFix = async () => {
+    const workerUrl = import.meta.env.VITE_WORKER_URL;
+    if (!workerUrl) return showAlert('Worker não configurado.', 'error');
+    setLoadingCardFix(true);
+    try {
+      const res = await fetch(`${workerUrl}/payments/fix-credit-card-links`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: true }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || 'Falha ao conferir vínculos de cartão.');
+      setCardFixPreview({ toFix: data.toFix, scanned: data.scanned, results: data.results || [] });
+      showAlert(`${data.toFix} inscrição(ões) com vínculo de cartão desatualizado.`, data.toFix ? 'warning' : 'success');
+    } catch (error: any) {
+      showAlert(error.message || 'Erro ao conferir vínculos de cartão.', 'error');
+    } finally {
+      setLoadingCardFix(false);
+    }
+  };
+
+  const applyCardFix = async () => {
+    const workerUrl = import.meta.env.VITE_WORKER_URL;
+    if (!workerUrl || !cardFixPreview) return;
+    if (!window.confirm(`Corrigir ${cardFixPreview.toFix} inscrição(ões) com vínculo de cartão desatualizado`)) return;
+    setApplyingCardFix(true);
+    try {
+      const res = await fetch(`${workerUrl}/payments/fix-credit-card-links`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || 'Falha ao corrigir vínculos de cartão.');
+      showAlert(`${data.fixed} inscrição(ões) corrigida(s).`, 'success');
+      setCardFixPreview(null);
+    } catch (error: any) {
+      showAlert(error.message || 'Erro ao corrigir vínculos de cartão.', 'error');
+    } finally {
+      setApplyingCardFix(false);
+    }
+  };
 
   const paidPending = useMemo(() => audit?.paidPending || [], [audit]);
   const pendingNotPaid = useMemo(() => (audit?.results || []).filter(item => !item.bankPaid), [audit]);
@@ -164,6 +265,78 @@ export default function AdminVerificarPagamentos() {
             {confirming ? 'Confirmando...' : 'Confirmar pagos e enviar mensagens'}
           </button>
         </div>
+      </div>
+
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 18, padding: 20, marginBottom: 22, display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ width: 42, height: 42, borderRadius: 12, background: '#eafff0', color: '#16a34a', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+          <ShieldCheck size={22} />
+        </div>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <strong style={{ display: 'block', color: '#071A45', fontSize: '0.95rem', fontWeight: 900 }}>Verificação automática (roda sozinha a cada 5 min)</strong>
+          {loadingAutoReconcile ? (
+            <span style={{ color: '#94a3b8', fontSize: '0.82rem', fontWeight: 700 }}>Carregando último resultado...</span>
+          ) : autoReconcile ? (
+            <span style={{ color: '#64748b', fontSize: '0.82rem', fontWeight: 700 }}>
+              Última rodada em {new Date(autoReconcile.startedAt).toLocaleString('pt-BR')} · {autoReconcile.totalChecked ?? 0} verificada(s), {autoReconcile.totalFixed ?? 0} corrigida(s) automaticamente
+              {autoReconcile.error ? ` · erro: ${autoReconcile.error}` : ''}
+            </span>
+          ) : (
+            <span style={{ color: '#94a3b8', fontSize: '0.82rem', fontWeight: 700 }}>Ainda não rodou nesta sessão do worker.</span>
+          )}
+        </div>
+        <button onClick={runAutoReconcileNow} disabled={runningAutoReconcile} style={primaryButton('#f1f5f9', '#071A45', runningAutoReconcile)}>
+          {runningAutoReconcile ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}
+          {runningAutoReconcile ? 'Rodando...' : 'Rodar agora'}
+        </button>
+      </div>
+
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 18, padding: 20, marginBottom: 22, display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ width: 42, height: 42, borderRadius: 12, background: '#fff7ed', color: '#c2410c', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+          <Wrench size={20} />
+        </div>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <strong style={{ display: 'block', color: '#071A45', fontSize: '0.95rem', fontWeight: 900 }}>Vínculos de cartão desatualizados</strong>
+          <span style={{ color: '#64748b', fontSize: '0.82rem', fontWeight: 700 }}>
+            Quando o cliente troca de Pix pra cartão no meio do checkout, às vezes o sistema fica com o ID de pagamento antigo. Isso confere e corrige.
+            {cardFixPreview && (
+              <> · <strong style={{ color: cardFixPreview.toFix ? '#c2410c' : '#16a34a' }}>{cardFixPreview.toFix} de {cardFixPreview.scanned}</strong> precisam de correção</>
+            )}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={previewCardFix} disabled={loadingCardFix} style={primaryButton('#f1f5f9', '#071A45', loadingCardFix)}>
+            {loadingCardFix ? <RefreshCw size={16} className="spin" /> : <SearchCheck size={16} />}
+            {loadingCardFix ? 'Conferindo...' : 'Conferir'}
+          </button>
+          {cardFixPreview && cardFixPreview.toFix > 0 && (
+            <button onClick={applyCardFix} disabled={applyingCardFix} style={primaryButton('#6BFF2A', '#071A45', applyingCardFix)}>
+              {applyingCardFix ? <RefreshCw size={16} className="spin" /> : <Wrench size={16} />}
+              {applyingCardFix ? 'Corrigindo...' : `Corrigir ${cardFixPreview.toFix}`}
+            </button>
+          )}
+        </div>
+        {cardFixPreview && cardFixPreview.results.length > 0 && (
+          <div style={{ width: '100%', overflowX: 'auto', marginTop: 4 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', color: '#64748b', fontSize: '.72rem', textTransform: 'uppercase' }}>
+                  <th style={th}>Atleta</th>
+                  <th style={th}>Provedor anterior</th>
+                  <th style={th}>ID cartão (Asaas)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cardFixPreview.results.map(item => (
+                  <tr key={item.registrationId} style={{ borderTop: '1px solid #f1f5f9' }}>
+                    <td style={td}><strong>{item.nome || 'Sem nome'}</strong><small style={small}>#{item.registrationId}</small></td>
+                    <td style={td}>{item.previousProvider || '-'}</td>
+                    <td style={td}><code style={{ fontSize: '.72rem' }}>{item.creditCardAsaasPaymentId}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginBottom: 22 }}>

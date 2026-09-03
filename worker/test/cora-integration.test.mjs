@@ -43,6 +43,50 @@ test('worker supports manual payment confirmation with WhatsApp notification', (
   assert.match(workerSource, /confirmRegistrationDocument/);
   assert.match(workerSource, /forceNotify: true/);
   assert.match(workerSource, /buildPaymentConfirmationText/);
+  assert.match(workerSource, /type: "payment_confirmation"/);
+  assert.match(workerSource, /paymentConfirmationWhatsAppSentAt/);
+  assert.match(workerSource, /getPaymentConfirmationWhatsAppConfig/);
+  assert.match(workerSource, /instanceName: whatsappConfig\.instanceName/);
+  assert.match(workerSource, /fallback: "image_required"/);
+  assert.match(workerSource, /WHATSAPP_CONFIRMATION_MAX_ATTEMPTS/);
+});
+
+test('worker reconciles local paid registrations with pending Asaas invoices', () => {
+  assert.match(workerSource, /\/bank-invoices\/asaas\/reconcile-paid/);
+  assert.match(workerSource, /reconcilePaidAsaasInvoices/);
+  assert.match(workerSource, /receiveInCash/);
+  assert.match(workerSource, /notifyCustomer: false/);
+  assert.match(workerSource, /paymentStatus === "pago"/);
+});
+
+test('worker reconciles Asaas paid invoices with local pending registrations', () => {
+  assert.match(workerSource, /\/bank-invoices\/asaas\/reconcile-system-pending/);
+  assert.match(workerSource, /reconcileAsaasPaidSystemPending/);
+  assert.match(workerSource, /skipNotify: true/);
+  assert.match(workerSource, /\/send-payment-card/);
+  assert.match(workerSource, /sendRegistrationPaymentCardById/);
+});
+
+test('worker deletes overdue Asaas invoices in bulk without touching registrations', () => {
+  assert.match(workerSource, /\/bank-invoices\/asaas\/delete-bulk/);
+  assert.match(workerSource, /deleteAsaasInvoicesBulk/);
+  assert.match(workerSource, /deleteAsaasInvoice/);
+});
+
+test('worker can clean pending Asaas registrations by deleting invoice and registration', () => {
+  assert.match(workerSource, /\/bank-invoices\/asaas\/cleanup-registrations/);
+  assert.match(workerSource, /cleanupPendingAsaasRegistrations/);
+  assert.match(workerSource, /deleteFirestoreDocument/);
+  assert.match(workerSource, /invoice_already_missing/);
+});
+
+test('worker exposes Asaas confirmed credit card amounts not yet credited', () => {
+  assert.match(workerSource, /getAsaasCreditCardPendingCredit/);
+  assert.match(workerSource, /requestUrl\.searchParams\.set\("status", "CONFIRMED"\)/);
+  assert.match(workerSource, /requestUrl\.searchParams\.set\("billingType", "CREDIT_CARD"\)/);
+  assert.match(workerSource, /pendingCredit/);
+  assert.match(workerSource, /amountCents/);
+  assert.match(workerSource, /estimatedCreditDate/);
 });
 
 test('Cora direct mode uses the mTLS fetch binding when available', () => {

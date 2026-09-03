@@ -14,9 +14,18 @@ id = "839c72d1ab0643b6aec0a7d4f23167a1"
 binding = "CORA_MTLS"
 certificate_id = "a6a1b374-c856-4ef6-b327-dc265e14887f"
 
+[[services]]
+binding = "WHATSAPP_HUB"
+service = "whatsapp-hub"
+
+[[rules]]
+type = "Data"
+globs = ["**/*.ttf"]
+fallthrough = true
+
 [vars]
 EVOLUTION_URL = "https://mcu-nightrun-whatsapp.fly.dev"
-INSTANCE_NAME = "mcu_nightrun_uba"
+INSTANCE_NAME = "vivo_bkp_2"
 FIREBASE_PROJECT_ID = "night-run-uba"
 FIREBASE_API_KEY = "AIzaSyC2CGktR6PIKUE010gyNBNkKAgBiDLLVTM"
 ASAAS_BASE_URL = "https://api.asaas.com/v3"
@@ -27,6 +36,8 @@ WHATSAPP_QUEUE_CONCURRENCY = "6"
 WHATSAPP_QUEUE_STAGGER_MS = "150"
 WHATSAPP_SEND_DELAY_MS = "250"
 WHATSAPP_QUEUE_MAX_ATTEMPTS = "3"
+WHATSAPP_INSTANCE_DELAY_MS = "30000"
+WHATSAPP_QUEUE_TICK_BUDGET_MS = "45000"
 
 [triggers]
 crons = ["* * * * *"]

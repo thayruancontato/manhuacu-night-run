@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Medal,
-  Shirt,
   Droplets,
   ShieldCheck,
   ClipboardList,
@@ -149,8 +148,8 @@ export const LandingPage = ({ displayVagas, vagas, eventDate, showUrgencyBanner 
               <div className="countdown-urgency">
                 <Flame size={24} />
                 <span>
-                  <strong>Ultimas vagas neste lote!</strong>
-                  <small>Apos o tempo, o valor aumenta.</small>
+                  <strong>Últimos dias de inscrição!</strong>
+                  <small>Não fique de fora.</small>
                 </span>
               </div>
             )}
@@ -173,15 +172,7 @@ export const LandingPage = ({ displayVagas, vagas, eventDate, showUrgencyBanner 
           </div>
         )}
 
-        {/* Vagas Container */}
-        <div className="animate-fade-up delay-2 vagas-box-container" style={{ margin: '15px 0', padding: '20px 15px 12px' }}>
-          <div className="vagas-box-label">VAGAS RESTANTES</div>
-          <div className="vagas-digits" style={{ justifyContent: 'center', transform: 'scale(0.9)' }}>
-            {String(displayVagas).padStart(4, '0').split('').map((digit, i) => (
-              <div key={i} className="vagas-digit">{digit}</div>
-            ))}
-          </div>
-        </div>
+        {/* Contador de vagas restantes ocultado a pedido: manter apenas o tempo restante (countdown). */}
 
         {/* Action Buttons */}
         <div className="animate-fade-up delay-3" style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
@@ -239,11 +230,6 @@ export const LandingPage = ({ displayVagas, vagas, eventDate, showUrgencyBanner 
             <Medal className="feature-icon" size={20} />
             <span className="feature-label">KIT ATLETA</span>
             <span className="feature-desc">Completo</span>
-          </div>
-          <div className="feature-item">
-            <Shirt className="feature-icon" size={20} />
-            <span className="feature-label">CAMISETA</span>
-            <span className="feature-desc">Exclusiva</span>
           </div>
           <div className="feature-item">
             <Droplets className="feature-icon" size={20} />

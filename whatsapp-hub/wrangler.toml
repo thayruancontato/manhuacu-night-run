@@ -1,0 +1,53 @@
+name = "whatsapp-hub"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[routes]]
+pattern = "thayruan.com.br/servico-whatsapp/automacao*"
+zone_name = "thayruan.com.br"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whatsapp_hub_db"
+database_id = "4fcfb683-cdd6-4ad2-a6db-53f9989c773e"
+
+[[kv_namespaces]]
+binding = "HUB_STORAGE"
+id = "2c8c4a8c54b64b1a8e5d301859e37d79"
+
+[[r2_buckets]]
+binding = "HUB_ASSETS"
+bucket_name = "whatsapp-hub-assets"
+
+[[queues.producers]]
+queue = "whatsapp-hub-outbox"
+binding = "OUTBOX"
+
+[[queues.consumers]]
+queue = "whatsapp-hub-outbox"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 4
+dead_letter_queue = "whatsapp-hub-outbox-dlq"
+
+[[queues.producers]]
+queue = "whatsapp-hub-outbox-dlq"
+binding = "OUTBOX_DLQ"
+
+[[queues.consumers]]
+queue = "whatsapp-hub-outbox-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[[rules]]
+type = "Data"
+globs = ["**/*.ttf"]
+fallthrough = true
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+WHATSAPP_INSTANCE_DELAY_MS = "30000"

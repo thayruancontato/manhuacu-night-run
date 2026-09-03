@@ -1,0 +1,740 @@
+/* Página pública de acompanhamento do sorteio */
+
+.sorteio-page {
+  position: relative;
+  min-height: 100svh;
+  background: radial-gradient(120% 90% at 50% 0%, #0d2a66 0%, #071a45 45%, #040d24 100%);
+  color: #fff;
+  overflow-x: hidden;
+  transition: background 0.6s ease;
+}
+
+/* Modo suspense: tom mais quente e tenso */
+.sorteio-page.is-live {
+  background: radial-gradient(120% 90% at 50% 0%, #3b1d05 0%, #1a0d18 45%, #0a0510 100%);
+  animation: sorteio-live-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes sorteio-live-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.16); }
+}
+
+.sorteio-bg-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 40% at 20% 10%, rgba(107, 255, 42, 0.14), transparent 70%),
+    radial-gradient(50% 40% at 85% 20%, rgba(59, 130, 246, 0.12), transparent 70%);
+}
+
+.sorteio-page.is-live .sorteio-bg-glow {
+  background:
+    radial-gradient(60% 40% at 20% 10%, rgba(245, 158, 11, 0.24), transparent 70%),
+    radial-gradient(55% 45% at 85% 25%, rgba(239, 68, 68, 0.18), transparent 70%);
+  animation: sorteio-glow-shift 4s ease-in-out infinite;
+}
+
+@keyframes sorteio-glow-shift {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
+.sorteio-shell {
+  position: relative;
+  z-index: 1;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 28px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+}
+
+.sorteio-header {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.sorteio-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.sorteio-status-pill.agendado {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.sorteio-status-pill.acontecendo {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+}
+
+.sorteio-status-pill.finalizado {
+  background: rgba(107, 255, 42, 0.16);
+  color: #6bff2a;
+}
+
+.sorteio-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.8);
+  animation: sorteio-dot 1.4s infinite;
+}
+
+@keyframes sorteio-dot {
+  0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.8); }
+  70% { box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+}
+
+.sorteio-title {
+  margin: 0;
+  font-size: 1.85rem;
+  font-weight: 900;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.sorteio-desc {
+  margin: 0;
+  max-width: 440px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+/* Prêmio em formato de ticket / vale-prêmio.
+   Os recortes laterais são buracos reais (mask), então funcionam sobre o fundo em degradê. */
+.sorteio-ticket {
+  --notch: 15px;
+  --cut: 232px;
+  position: relative;
+  width: 100%;
+  border-radius: 20px;
+  -webkit-mask:
+    radial-gradient(circle var(--notch) at left var(--cut), transparent 98%, #000 100%),
+    radial-gradient(circle var(--notch) at right var(--cut), transparent 98%, #000 100%);
+  -webkit-mask-composite: source-in;
+  mask:
+    radial-gradient(circle var(--notch) at left var(--cut), transparent 98%, #000 100%),
+    radial-gradient(circle var(--notch) at right var(--cut), transparent 98%, #000 100%);
+  mask-composite: intersect;
+  filter: drop-shadow(0 16px 34px rgba(0, 0, 0, 0.45));
+}
+
+/* Canhoto: fundo claro para o logo/foto do prêmio respirar */
+.sorteio-ticket-top {
+  box-sizing: border-box;
+  height: var(--cut);
+  background: #fff;
+  display: grid;
+  place-items: center;
+  padding: 24px 26px;
+}
+
+/* contain (e não cover) para nunca cortar um logo de patrocinador */
+.sorteio-ticket-top img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.sorteio-ticket-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: #cbd5e1;
+}
+
+/* Picote entre o canhoto e o corpo, alinhado com os recortes */
+.sorteio-ticket-perf {
+  position: absolute;
+  top: var(--cut);
+  left: calc(var(--notch) + 8px);
+  right: calc(var(--notch) + 8px);
+  height: 0;
+  border-top: 2px dashed rgba(15, 23, 42, 0.28);
+  transform: translateY(-1px);
+  z-index: 1;
+}
+
+.sorteio-ticket-bottom {
+  background: linear-gradient(160deg, #16233f 0%, #0b1020 100%);
+  padding: 20px 22px 16px;
+  text-align: left;
+}
+
+.sorteio-ticket-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #6bff2a;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.sorteio-page.is-live .sorteio-ticket-label {
+  color: #fbbf24;
+}
+
+.sorteio-ticket-info strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.12rem;
+  font-weight: 900;
+  line-height: 1.3;
+  color: #fff;
+}
+
+/* Faixa de código de barras: reforça a leitura de "ticket" */
+.sorteio-ticket-barcode {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 26px;
+  margin-top: 14px;
+  opacity: 0.5;
+}
+
+.sorteio-ticket-barcode i {
+  flex: 1;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 1px;
+}
+
+/* Larguras irregulares para parecer um código de barras de verdade */
+.sorteio-ticket-barcode i:nth-child(3n) { flex: 2; }
+.sorteio-ticket-barcode i:nth-child(4n) { flex: 0.5; opacity: 0.55; }
+.sorteio-ticket-barcode i:nth-child(5n) { flex: 2.6; }
+.sorteio-ticket-barcode i:nth-child(7n) { flex: 0.6; opacity: 0.4; }
+
+@media (max-width: 480px) {
+  .sorteio-ticket { --cut: 196px; }
+}
+
+/* Suspense */
+.sorteio-suspense {
+  width: 100%;
+  padding: 30px 20px;
+  border-radius: 24px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+/* Palco da animação de suspense */
+.sorteio-stage {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  margin: 0 auto 22px;
+  display: grid;
+  place-items: center;
+}
+
+.sorteio-stage > * {
+  grid-area: 1 / 1;
+  box-sizing: border-box;
+}
+
+@keyframes sorteio-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes sorteio-spin-back {
+  to { transform: rotate(-360deg); }
+}
+
+/* Ondas que se expandem para fora */
+.sorteio-wave {
+  width: 118px;
+  height: 118px;
+  border-radius: 50%;
+  border: 2px solid rgba(245, 158, 11, 0.55);
+  opacity: 0;
+  animation: sorteio-wave 2.6s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
+
+.sorteio-wave:nth-of-type(2) { animation-delay: 0.85s; }
+.sorteio-wave:nth-of-type(3) { animation-delay: 1.7s; }
+
+@keyframes sorteio-wave {
+  0% { transform: scale(0.7); opacity: 0; }
+  22% { opacity: 0.75; }
+  100% { transform: scale(1.72); opacity: 0; }
+}
+
+/* Anel tracejado externo, giro lento */
+.sorteio-ring-dashed {
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  border: 2px dashed rgba(251, 191, 36, 0.3);
+  animation: sorteio-spin 14s linear infinite;
+}
+
+/* Arcos de luz girando (cone mascarado vira anel) */
+.sorteio-ring-arc {
+  width: 164px;
+  height: 164px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(245, 158, 11, 0) 0deg, rgba(245, 158, 11, 0) 200deg, rgba(245, 158, 11, 0.65) 300deg, #fbbf24 355deg, rgba(245, 158, 11, 0) 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+  animation: sorteio-spin 1.15s cubic-bezier(0.75, 0.05, 0.3, 0.95) infinite;
+  filter: drop-shadow(0 0 7px rgba(245, 158, 11, 0.65));
+}
+
+.sorteio-ring-arc.inner {
+  width: 128px;
+  height: 128px;
+  background: conic-gradient(from 0deg, rgba(239, 68, 68, 0) 0deg, rgba(239, 68, 68, 0) 230deg, rgba(248, 113, 113, 0.55) 320deg, #fca5a5 358deg, rgba(239, 68, 68, 0) 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  animation: sorteio-spin-back 1.9s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(248, 113, 113, 0.5));
+}
+
+/* Pontos em órbita */
+.sorteio-orbit {
+  position: relative;
+  width: 182px;
+  height: 182px;
+  border-radius: 50%;
+  animation: sorteio-spin 2.4s linear infinite;
+}
+
+.sorteio-orbit.reverse {
+  width: 146px;
+  height: 146px;
+  animation: sorteio-spin-back 3.1s linear infinite;
+}
+
+.sorteio-orbit i {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  border-radius: 50%;
+  background: #fbbf24;
+  box-shadow: 0 0 12px 3px rgba(251, 191, 36, 0.85);
+}
+
+.sorteio-orbit.reverse i {
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  background: #fca5a5;
+  box-shadow: 0 0 10px 2px rgba(252, 165, 165, 0.7);
+}
+
+/* Núcleo com o troféu */
+.sorteio-core {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fbbf24;
+  background: radial-gradient(circle at 50% 35%, rgba(251, 191, 36, 0.32), rgba(120, 53, 15, 0.5) 70%);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  animation: sorteio-core-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes sorteio-core-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 22px rgba(245, 158, 11, 0.35), inset 0 0 18px rgba(245, 158, 11, 0.2);
+  }
+  50% {
+    transform: scale(1.07);
+    box-shadow: 0 0 46px rgba(245, 158, 11, 0.7), inset 0 0 26px rgba(245, 158, 11, 0.35);
+  }
+}
+
+.sorteio-core svg {
+  animation: sorteio-trophy 1.6s ease-in-out infinite;
+}
+
+@keyframes sorteio-trophy {
+  0%, 100% { transform: rotate(-7deg) scale(1); }
+  25% { transform: rotate(7deg) scale(1.06); }
+  50% { transform: rotate(-5deg) scale(1); }
+  75% { transform: rotate(5deg) scale(1.06); }
+}
+
+/* Respeita quem prefere menos movimento */
+@media (prefers-reduced-motion: reduce) {
+  .sorteio-wave,
+  .sorteio-ring-dashed,
+  .sorteio-ring-arc,
+  .sorteio-orbit,
+  .sorteio-core,
+  .sorteio-core svg,
+  .sorteio-suspense-track,
+  .sorteio-page.is-live,
+  .sorteio-page.is-live .sorteio-bg-glow {
+    animation: none;
+  }
+}
+
+.sorteio-suspense h2 {
+  margin: 0 0 8px;
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: #fbbf24;
+  text-transform: uppercase;
+  animation: sorteio-text-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes sorteio-text-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.sorteio-suspense p {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.sorteio-suspense-names {
+  height: 42px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sorteio-suspense-track {
+  display: flex;
+  flex-direction: column;
+  animation: sorteio-roll 1.2s steps(6) infinite;
+}
+
+.sorteio-suspense-track span {
+  height: 42px;
+  line-height: 42px;
+  font-weight: 900;
+  font-size: 1.1rem;
+  letter-spacing: 3px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+@keyframes sorteio-roll {
+  to { transform: translateY(-252px); }
+}
+
+/* Agendado / encerrado */
+.sorteio-scheduled {
+  width: 100%;
+  padding: 30px 22px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.sorteio-scheduled h2 {
+  margin: 12px 0 8px;
+  font-size: 1.2rem;
+  font-weight: 900;
+  color: #fff;
+}
+
+.sorteio-scheduled p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+/* Ganhador */
+.sorteio-winner {
+  width: 100%;
+  padding: 30px 22px;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(107, 255, 42, 0.16), rgba(107, 255, 42, 0.04));
+  border: 1px solid rgba(107, 255, 42, 0.45);
+  animation: sorteio-winner-in 0.5s ease-out;
+}
+
+@keyframes sorteio-winner-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.sorteio-winner-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: #6bff2a;
+  color: #071a45;
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.sorteio-winner-photo {
+  width: 128px;
+  height: 128px;
+  margin: 18px auto 14px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 4px solid #6bff2a;
+  background: rgba(255, 255, 255, 0.1);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 34px rgba(107, 255, 42, 0.4);
+}
+
+.sorteio-winner-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sorteio-winner-photo span {
+  font-size: 2.4rem;
+  font-weight: 900;
+  color: #6bff2a;
+}
+
+.sorteio-winner h2 {
+  margin: 0 0 6px;
+  font-size: 1.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  line-height: 1.15;
+}
+
+.sorteio-winner p {
+  margin: 0 0 8px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.95rem;
+}
+
+.sorteio-winner p strong {
+  color: #6bff2a;
+}
+
+.sorteio-winner small {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* Painel do coordenador (link público, somente disparo) */
+.sorteio-op-readonly {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 6px 18px;
+}
+
+.sorteio-op-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.sorteio-op-row:last-child { border-bottom: 0; }
+
+.sorteio-op-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.sorteio-op-row strong {
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 900;
+  text-align: right;
+}
+
+.sorteio-op-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.sorteio-op-error {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.sorteio-op-draw {
+  width: 100%;
+  min-height: 74px;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #6bff2a, #3fbf12);
+  color: #071a45;
+  font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(107, 255, 42, 0.32);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.sorteio-op-draw:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 38px rgba(107, 255, 42, 0.45);
+}
+
+.sorteio-op-draw:active:not(:disabled) { transform: translateY(0); }
+
+.sorteio-op-draw:disabled {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.sorteio-op-winners {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.sorteio-op-winner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.25);
+  text-align: left;
+}
+
+.sorteio-op-winner-photo {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 2px solid #6bff2a;
+  background: rgba(255, 255, 255, 0.1);
+  display: grid;
+  place-items: center;
+}
+
+.sorteio-op-winner-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sorteio-op-winner-photo span {
+  font-size: 0.9rem;
+  font-weight: 900;
+  color: #6bff2a;
+}
+
+.sorteio-op-winner strong {
+  display: block;
+  color: #fff;
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.sorteio-op-winner small {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.sorteio-op-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.sorteio-empty {
+  margin-top: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.sorteio-empty strong {
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.sorteio-empty span {
+  font-size: 0.85rem;
+}
+
+.sorteio-footer {
+  margin-top: 10px;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+@media (max-width: 480px) {
+  .sorteio-title { font-size: 1.5rem; }
+  .sorteio-winner h2 { font-size: 1.4rem; }
+}

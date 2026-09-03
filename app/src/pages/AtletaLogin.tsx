@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, getDocs, query, where, getCountFromServer, doc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { useDialog } from '../context/CustomDialogContext';
@@ -81,22 +81,23 @@ export default function UnifiedLogin() {
       }
 
       // 2. TENTAR LOGIN COMO ATLETA
+      // O mesmo e-mail pode ter várias inscrições (ex: um responsável cadastrando vários atletas),
+      // cada uma com seu próprio CPF/senha. O Firebase Auth só guarda 1 senha por e-mail, então
+      // NÃO autenticamos por ali (tentar geraria erro 400 sempre que o CPF digitado não for o
+      // mesmo que criou a conta daquele e-mail). A validação real é o CPF batendo com a inscrição
+      // no Firestore - o ID dela é salvo localmente e é o que identifica o atleta no dashboard.
       const atletaQuery = query(collection(db, 'nightrun_registrations'), where('email', '==', cleanEmail));
       const atletaSnap = await getDocs(atletaQuery);
-      if (!atletaSnap.empty) {
-        const docAtleta = atletaSnap.docs[0];
-        const data = docAtleta.data();
-        const dbCpfDigits = (data.cpf || '').replace(/\D/g, '');
-        if (dbCpfDigits === cleanPassword && cleanPassword.length >= 11) {
-          try { await signInWithEmailAndPassword(auth, cleanEmail, password); }
-          catch (authError: any) {
-            if (authError.code === 'auth/user-not-found' || authError.code === 'auth/invalid-credential') {
-              try { await createUserWithEmailAndPassword(auth, cleanEmail, password); } catch (e) {}
-            }
-          }
-          localStorage.setItem('nightrun_atleta_auth', 'true'); // Mantido apenas para compatibilidade legada se necessário
+      if (!atletaSnap.empty && cleanPassword.length >= 11) {
+        const docAtleta = atletaSnap.docs.find(d => (d.data().cpf || '').replace(/\D/g, '') === cleanPassword);
+        if (docAtleta) {
+          try { await signOut(auth); } catch {} // Limpa qualquer sessão (admin/outro atleta) que possa estar ativa
+          localStorage.setItem('nightrun_atleta_auth', 'true');
+          localStorage.setItem('nightrun_atleta_reg_id', docAtleta.id);
           showLoading(1000, 'Acessando Área do Atleta...');
-          setTimeout(() => navigate('/atleta/dashboard'), 1000);
+          // Navegação completa (não só o router) para o contexto de autenticação recarregar
+          // já lendo a inscrição selecionada acima.
+          setTimeout(() => { window.location.href = '/atleta/dashboard'; }, 1000);
           return;
         }
       }

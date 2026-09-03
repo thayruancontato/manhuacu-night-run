@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { Building2, RefreshCw, Save, Webhook } from 'lucide-react';
 import { db } from '../firebase';
@@ -14,7 +15,11 @@ const PROVIDER_LOGOS: Record<PaymentProvider, string> = {
 
 export default function AdminIntegracoes() {
   const { showAlert } = useDialog();
-  const [activeIntegrationTab, setActiveIntegrationTab] = useState<IntegrationTab>('bancos');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeIntegrationTab: IntegrationTab = searchParams.get('tab') === 'webhook' ? 'webhook' : 'bancos';
+  const setActiveIntegrationTab = (tab: IntegrationTab) => {
+    setSearchParams(tab === 'bancos' ? {} : { tab }, { replace: false });
+  };
   const [paymentProvider, setPaymentProvider] = useState<PaymentProvider>('asaas');
   const [savingPaymentProvider, setSavingPaymentProvider] = useState(false);
   const [webhookTestProvider, setWebhookTestProvider] = useState<PaymentProvider>('asaas');

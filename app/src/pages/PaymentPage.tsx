@@ -16,6 +16,7 @@ export default function PaymentPage() {
   const [checkingPayment, setCheckingPayment] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'card'>('pix');
   const [creatingCardPayment, setCreatingCardPayment] = useState(false);
+  const [allowedMethods, setAllowedMethods] = useState({ pix: true, cartao: true });
   const autoCheckingRef = useRef(false);
   const { showAlert } = useDialog();
   const navigate = useNavigate();
@@ -25,6 +26,23 @@ export default function PaymentPage() {
       setTimeLeft(prev => (prev > 0 ? prev - 1 : 0));
     }, 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'nightrun_settings', 'payment_methods'));
+        if (snap.exists()) {
+          const data = snap.data();
+          const pix = data.pix !== false;
+          const cartao = data.cartao !== false;
+          setAllowedMethods({ pix, cartao });
+          if (!pix && cartao) setPaymentMethod('card');
+        }
+      } catch (e) {
+        console.error('Erro ao carregar métodos de pagamento', e);
+      }
+    })();
   }, []);
 
   const formatTime = (seconds: number) => {
@@ -204,14 +222,16 @@ export default function PaymentPage() {
             )}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, width: '100%', margin: '14px 0 16px' }}>
-            <button type="button" onClick={() => setPaymentMethod('pix')} style={{ border: paymentMethod === 'pix' ? '2px solid #6BFF2A' : '1px solid rgba(255,255,255,0.14)', background: paymentMethod === 'pix' ? 'rgba(107,255,42,0.12)' : 'rgba(255,255,255,0.06)', color: '#fff', borderRadius: 14, padding: '12px 10px', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' }}>
-              <Copy size={16} /> Pix
-            </button>
-            <button type="button" onClick={() => setPaymentMethod('card')} style={{ border: paymentMethod === 'card' ? '2px solid #6BFF2A' : '1px solid rgba(255,255,255,0.14)', background: paymentMethod === 'card' ? 'rgba(107,255,42,0.12)' : 'rgba(255,255,255,0.06)', color: '#fff', borderRadius: 14, padding: '12px 10px', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' }}>
-              <CreditCard size={16} /> Cartão
-            </button>
-          </div>
+          {allowedMethods.pix && allowedMethods.cartao && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, width: '100%', margin: '14px 0 16px' }}>
+              <button type="button" onClick={() => setPaymentMethod('pix')} style={{ border: paymentMethod === 'pix' ? '2px solid #6BFF2A' : '1px solid rgba(255,255,255,0.14)', background: paymentMethod === 'pix' ? 'rgba(107,255,42,0.12)' : 'rgba(255,255,255,0.06)', color: '#fff', borderRadius: 14, padding: '12px 10px', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' }}>
+                <Copy size={16} /> Pix
+              </button>
+              <button type="button" onClick={() => setPaymentMethod('card')} style={{ border: paymentMethod === 'card' ? '2px solid #6BFF2A' : '1px solid rgba(255,255,255,0.14)', background: paymentMethod === 'card' ? 'rgba(107,255,42,0.12)' : 'rgba(255,255,255,0.06)', color: '#fff', borderRadius: 14, padding: '12px 10px', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' }}>
+                <CreditCard size={16} /> Cartão
+              </button>
+            </div>
+          )}
 
           {/* QR Code Section */}
           {paymentMethod === 'pix' ? (

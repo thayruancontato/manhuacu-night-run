@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { AlertTriangle, Info, Plus, Save, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import html2canvas from 'html2canvas';
+import { AlertTriangle, ChevronDown, ChevronUp, Gift, ImageDown, Info, Plus, Save, Trash2, Users } from 'lucide-react';
 import { db } from '../firebase';
 import { useDialog } from '../context/CustomDialogContext';
 import { AdminPageSkeleton } from '../components/Skeleton';
@@ -43,6 +45,21 @@ const DEFAULT_SETTINGS: LoteSettings = {
   forceUrgencyBanner: false,
 };
 
+type LotePagante = {
+  id: string;
+  nome: string;
+  cpf: string;
+  telefone: string;
+  email: string;
+  amount: number;
+  usouCupom: boolean;
+  couponCode: string;
+  gratuito: boolean;
+  createdAt?: any;
+};
+
+const formatMoneyBR = (valueInCents: number) => (Number(valueInCents || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
 const normalizeSettings = (value: Partial<LoteSettings> = {}): LoteSettings => ({
   ...DEFAULT_SETTINGS,
   ...value,
@@ -61,14 +78,53 @@ const normalizeSettings = (value: Partial<LoteSettings> = {}): LoteSettings => (
 });
 
 export default function AdminLotes() {
+  const navigate = useNavigate();
   const [settings, setSettings] = useState<LoteSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pagantesByLote, setPagantesByLote] = useState<Record<number, LotePagante[]>>({});
+  const [expandedLote, setExpandedLote] = useState<number | null>(null);
+  const [generatingImage, setGeneratingImage] = useState(false);
+  const summaryRef = useRef<HTMLDivElement>(null);
   const { showAlert } = useDialog();
 
   useEffect(() => {
     loadSettings();
+    loadPagantes();
   }, []);
+
+  const loadPagantes = async () => {
+    try {
+      // Todas as inscrições pagas (inclui as gratuitas por cupom 100%, que têm paymentStatus 'pago').
+      const snap = await getDocs(query(collection(db, 'nightrun_registrations'), where('paymentStatus', '==', 'pago')));
+      const grouped: Record<number, LotePagante[]> = {};
+      snap.docs.forEach(item => {
+        const data = item.data();
+        if (data.loteIndex === null || data.loteIndex === undefined) return;
+        const idx = Number(data.loteIndex);
+        if (!Number.isInteger(idx) || idx < 0) return;
+        const pagante: LotePagante = {
+          id: item.id,
+          nome: String(data.nome || 'Sem nome'),
+          cpf: String(data.cpf || ''),
+          telefone: String(data.telefone || ''),
+          email: String(data.email || ''),
+          amount: Number(data.amount || 0),
+          usouCupom: Boolean(data.descontoCupom || data.couponCode),
+          couponCode: String(data.couponCode || ''),
+          gratuito: Boolean(data.gratuito),
+          createdAt: data.createdAt,
+        };
+        grouped[idx] = [...(grouped[idx] || []), pagante];
+      });
+      Object.keys(grouped).forEach(key => {
+        grouped[Number(key)].sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+      });
+      setPagantesByLote(grouped);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -94,6 +150,32 @@ export default function AdminLotes() {
       showAlert('Erro ao salvar.', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const generateResumoImage = async () => {
+    if (!summaryRef.current) return;
+    try {
+      setGeneratingImage(true);
+      // Aguarda um frame para garantir que o card oculto esteja renderizado.
+      await new Promise(resolve => setTimeout(resolve, 150));
+      const canvas = await html2canvas(summaryRef.current, {
+        scale: 2,
+        backgroundColor: '#071A45',
+        useCORS: true,
+        logging: false,
+      });
+      const dataUrl = canvas.toDataURL('image/png', 1.0);
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = `resumo-lotes-${new Date().toISOString().slice(0, 10)}.png`;
+      link.click();
+      showAlert('Imagem de resumo gerada.', 'success');
+    } catch (e) {
+      console.error(e);
+      showAlert('Erro ao gerar a imagem de resumo.', 'error');
+    } finally {
+      setGeneratingImage(false);
     }
   };
 
@@ -148,14 +230,24 @@ export default function AdminLotes() {
           <h1 style={{ fontSize: '1.8rem', fontWeight: 900, color: '#071A45', marginBottom: 4 }}>Lotes e Preços</h1>
           <p style={{ color: '#64748b', fontWeight: 500 }}>Defina valores, descontos e regras de cobrança por volume de inscrições.</p>
         </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          style={{ background: '#071A45', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', boxShadow: '0 4px 12px rgba(7, 26, 69, 0.2)' }}
-        >
-          <Save size={18} />
-          {saving ? 'Salvando...' : 'Salvar Alterações'}
-        </button>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <button
+            onClick={generateResumoImage}
+            disabled={generatingImage}
+            style={{ background: '#6BFF2A', color: '#071A45', border: 'none', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', boxShadow: '0 4px 12px rgba(107, 255, 42, 0.25)' }}
+          >
+            <ImageDown size={18} />
+            {generatingImage ? 'Gerando...' : 'Gerar imagem de resumo'}
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{ background: '#071A45', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', boxShadow: '0 4px 12px rgba(7, 26, 69, 0.2)' }}
+          >
+            <Save size={18} />
+            {saving ? 'Salvando...' : 'Salvar Alterações'}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
@@ -255,6 +347,61 @@ export default function AdminLotes() {
                       />
                     </div>
                   </div>
+
+                  {(() => {
+                    const pagantes = pagantesByLote[idx] || [];
+                    const comCupom = pagantes.filter(p => p.usouCupom).length;
+                    const semCupom = pagantes.length - comCupom;
+                    const isOpen = expandedLote === idx;
+                    return (
+                      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 16, overflow: 'hidden' }}>
+                        <button
+                          onClick={() => setExpandedLote(isOpen ? null : idx)}
+                          style={{ width: '100%', border: 'none', background: isOpen ? '#f8fafc' : '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, cursor: 'pointer' }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <div style={{ width: 34, height: 34, borderRadius: 10, background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <Users size={18} />
+                            </div>
+                            <strong style={{ color: '#071A45', fontSize: '0.95rem' }}>{pagantes.length} pagantes neste lote</strong>
+                            <span style={{ padding: '3px 9px', borderRadius: 999, background: '#ede9fe', color: '#6d28d9', fontSize: '0.68rem', fontWeight: 900 }}>{comCupom} com cupom</span>
+                            <span style={{ padding: '3px 9px', borderRadius: 999, background: '#dcfce7', color: '#166534', fontSize: '0.68rem', fontWeight: 900 }}>{semCupom} sem cupom</span>
+                          </div>
+                          {isOpen ? <ChevronUp size={18} color="#64748b" /> : <ChevronDown size={18} color="#64748b" />}
+                        </button>
+
+                        {isOpen && (
+                          <div style={{ borderTop: '1px solid #e2e8f0' }}>
+                            {pagantes.length ? pagantes.map(p => (
+                              <div
+                                key={p.id}
+                                onClick={() => navigate(`/admin/inscritos/${p.id}`)}
+                                style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 1.6fr) minmax(110px, .9fr) minmax(90px, .6fr) auto', gap: 12, alignItems: 'center', padding: '11px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer' }}
+                              >
+                                <div style={{ minWidth: 0 }}>
+                                  <strong style={{ color: '#071A45', fontSize: '0.86rem', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.nome}</strong>
+                                  <small style={{ color: '#64748b', fontWeight: 700 }}>{p.cpf || 'CPF não informado'}{p.telefone ? ` · ${p.telefone}` : ''}</small>
+                                </div>
+                                <div>
+                                  {p.gratuito ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 999, background: '#ede9fe', color: '#6d28d9', fontSize: '0.66rem', fontWeight: 900 }}><Gift size={11} /> {p.couponCode || 'GRATUITO'}</span>
+                                  ) : p.usouCupom ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 999, background: '#eff6ff', color: '#2563eb', fontSize: '0.66rem', fontWeight: 900 }}><Gift size={11} /> {p.couponCode || 'CUPOM'}</span>
+                                  ) : (
+                                    <span style={{ padding: '3px 9px', borderRadius: 999, background: '#f1f5f9', color: '#64748b', fontSize: '0.66rem', fontWeight: 900 }}>SEM CUPOM</span>
+                                  )}
+                                </div>
+                                <span style={{ color: '#071A45', fontWeight: 900, fontSize: '0.85rem' }}>{formatMoneyBR(p.amount)}</span>
+                                <span style={{ color: '#2563eb', fontWeight: 900, fontSize: '0.72rem', textTransform: 'uppercase' }}>Abrir</span>
+                              </div>
+                            )) : (
+                              <div style={{ padding: 18, textAlign: 'center', color: '#64748b', fontWeight: 700, fontSize: '0.85rem' }}>Nenhum pagamento confirmado neste lote ainda.</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -346,6 +493,75 @@ export default function AdminLotes() {
               </p>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Card oculto usado para gerar a imagem de resumo dos lotes */}
+      <div style={{ position: 'fixed', left: -99999, top: 0, pointerEvents: 'none' }} aria-hidden="true">
+        <div ref={summaryRef} style={{ width: 760, background: 'linear-gradient(160deg, #071A45 0%, #0b2560 100%)', color: '#fff', padding: 40, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 28, paddingBottom: 20, borderBottom: '2px solid rgba(107,255,42,0.4)' }}>
+            <div>
+              <div style={{ color: '#6BFF2A', fontWeight: 900, fontSize: '0.8rem', letterSpacing: 1, textTransform: 'uppercase' }}>MCU Night Run 2026</div>
+              <div style={{ fontSize: '1.9rem', fontWeight: 900, marginTop: 4 }}>Resumo de Lotes</div>
+            </div>
+            <div style={{ textAlign: 'right', color: 'rgba(255,255,255,0.6)', fontWeight: 700, fontSize: '0.8rem' }}>
+              Gerado em<br />
+              <strong style={{ color: '#fff', fontSize: '0.95rem' }}>{new Date().toLocaleDateString('pt-BR')}</strong>
+            </div>
+          </div>
+
+          {(() => {
+            let totalPagantes = 0, totalComCupom = 0, totalArrecadado = 0;
+            const rows = settings.adulto.map((lote, idx) => {
+              const pagantes = pagantesByLote[idx] || [];
+              const comCupom = pagantes.filter(p => p.usouCupom).length;
+              const semCupom = pagantes.length - comCupom;
+              const arrecadado = pagantes.reduce((sum, p) => sum + p.amount, 0);
+              totalPagantes += pagantes.length;
+              totalComCupom += comCupom;
+              totalArrecadado += arrecadado;
+              return { idx, price: lote.price, count: pagantes.length, comCupom, semCupom, arrecadado };
+            });
+            const totalSemCupom = totalPagantes - totalComCupom;
+            return (
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {rows.map(row => (
+                    <div key={row.idx} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 16, padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 18 }}>
+                      <div style={{ background: '#6BFF2A', color: '#071A45', fontWeight: 900, fontSize: '0.85rem', width: 58, height: 58, borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <span style={{ fontSize: '0.6rem', letterSpacing: 0.5 }}>LOTE</span>
+                        <span style={{ fontSize: '1.3rem', lineHeight: 1 }}>{row.idx + 1}</span>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 900 }}>{row.count} <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'rgba(255,255,255,0.6)' }}>pagantes</span></div>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                          <span style={{ padding: '4px 11px', borderRadius: 999, background: 'rgba(167,139,250,0.22)', color: '#c4b5fd', fontSize: '0.72rem', fontWeight: 900 }}>{row.comCupom} com cupom</span>
+                          <span style={{ padding: '4px 11px', borderRadius: 999, background: 'rgba(107,255,42,0.18)', color: '#a3e635', fontSize: '0.72rem', fontWeight: 900 }}>{row.semCupom} sem cupom</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase' }}>Valor do lote</div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 900 }}>{formatMoneyBR(row.price)}</div>
+                        <div style={{ color: '#6BFF2A', fontSize: '0.78rem', fontWeight: 800, marginTop: 2 }}>{formatMoneyBR(row.arrecadado)} arrecadado</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: 22, background: '#6BFF2A', color: '#071A45', borderRadius: 18, padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 900, textTransform: 'uppercase', opacity: 0.7 }}>Total de pagantes</span>
+                    <span style={{ fontSize: '2rem', fontWeight: 900, lineHeight: 1 }}>{totalPagantes}</span>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 800, marginTop: 4 }}>{totalComCupom} com cupom · {totalSemCupom} sem cupom</span>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 900, textTransform: 'uppercase', opacity: 0.7, display: 'block' }}>Total arrecadado</span>
+                    <span style={{ fontSize: '1.6rem', fontWeight: 900 }}>{formatMoneyBR(totalArrecadado)}</span>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>

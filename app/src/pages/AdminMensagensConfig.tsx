@@ -1,8 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { collection, doc, getDoc, getDocs, orderBy, query, setDoc } from 'firebase/firestore';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { addDoc, collection, doc, getDoc, getDocs, limit as firestoreLimit, orderBy, query, setDoc, where } from 'firebase/firestore';
 import {
   CheckCircle2,
+  ClipboardCheck,
   Clock,
+  History,
   KeyRound,
   Plus,
   MessageSquareText,
@@ -19,11 +22,16 @@ import {
   Trash2,
 } from 'lucide-react';
 import { db } from '../firebase';
+import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import { FormInput, FormSwitch, FormTextarea } from '../components/AdminForm';
 import LoadingModal from '../components/LoadingModal';
 import { useDialog } from '../context/CustomDialogContext';
 import { formatDateTimeBR } from '../utils/dateUtils';
+import { findCamisetaByValue, formatCamisetaLabel } from '../utils/camisetaUtils';
+import { buildDataConfirmationMessage } from '../utils/dataConfirmationMessage';
 import '../styles/admin.css';
+
+const dataConfirmationRunsRef = collection(db, 'nightrun_data_confirmation_runs');
 
 type WhatsAppConfig = {
   evolutionUrl: string;
@@ -55,7 +63,19 @@ type QueueItem = {
   attempts?: number;
 };
 
-type TabId = 'numeros' | 'lote' | 'fila' | 'teste' | 'api' | 'automacoes';
+type TabId = 'numeros' | 'lote' | 'fila' | 'teste' | 'api' | 'automacoes' | 'resumo';
+
+type OperationalConfig = {
+  enabled: boolean;
+  time: string;
+  phone: string;
+  instanceName: string;
+  bannerUrl: string;
+  lastSentDate?: string;
+  lastSentAt?: any;
+};
+
+const DEFAULT_OPERATIONAL: OperationalConfig = { enabled: false, time: '08:00', phone: '', instanceName: '', bannerUrl: '' };
 
 const DEFAULT_CONFIG: WhatsAppConfig = {
   evolutionUrl: 'https://evolution-api-im3d.onrender.com',
@@ -68,6 +88,13 @@ const DEFAULT_CONFIG: WhatsAppConfig = {
 };
 
 const settingsRef = doc(db, 'system_settings', 'nightrun_whatsapp');
+const operationalSummaryRef = doc(db, 'nightrun_settings', 'operational_summary');
+
+// Data BR (UTC-3) em AAAA-MM-DD, com deslocamento em dias (0 = hoje, -1 = ontem).
+const brDateStr = (offsetDays = 0) => {
+  const br = new Date(Date.now() - 3 * 3600 * 1000 + offsetDays * 86400 * 1000);
+  return `${br.getUTCFullYear()}-${String(br.getUTCMonth() + 1).padStart(2, '0')}-${String(br.getUTCDate()).padStart(2, '0')}`;
+};
 const publicNoticeRef = doc(db, 'nightrun_settings', 'whatsapp_registration_notice');
 const publicNumbersRef = doc(db, 'nightrun_settings', 'whatsapp_numbers_public');
 const numbersRef = doc(db, 'system_settings', 'nightrun_whatsapp_numbers');
@@ -118,7 +145,13 @@ export default function AdminMensagensConfig() {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [qrWatcherActive, setQrWatcherActive] = useState(false);
   const [lastQrRefreshAt, setLastQrRefreshAt] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>('numeros');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const validTabIds: TabId[] = ['numeros', 'lote', 'fila', 'teste', 'api', 'automacoes', 'resumo'];
+  const tabFromUrl = searchParams.get('tab') as TabId | null;
+  const activeTab: TabId = tabFromUrl && validTabIds.includes(tabFromUrl) ? tabFromUrl : 'numeros';
+  const setActiveTab = (tab: TabId) => {
+    setSearchParams(tab === 'numeros' ? {} : { tab }, { replace: false });
+  };
   const [testInstanceName, setTestInstanceName] = useState('');
   const [registrations, setRegistrations] = useState<any[]>([]);
   const [batchPaymentStatus, setBatchPaymentStatus] = useState<'pago' | 'pendente'>('pendente');
@@ -133,6 +166,22 @@ export default function AdminMensagensConfig() {
   const [newInstanceName, setNewInstanceName] = useState('');
   const [instanceStatuses, setInstanceStatuses] = useState<Record<string, any>>({});
   const [instanceQr, setInstanceQr] = useState<Record<string, string>>({});
+  const [modalidadesMap, setModalidadesMap] = useState<Record<string, string>>({});
+  const [camisetas, setCamisetas] = useState<any[]>([]);
+  const [kitsCadastrados, setKitsCadastrados] = useState<KitRecord[]>([]);
+  const [automacaoView, setAutomacaoView] = useState<'avisos' | 'confirmacao'>('avisos');
+  const [confirmPreviewId, setConfirmPreviewId] = useState<string | null>(null);
+  const [confirmSending, setConfirmSending] = useState(false);
+  const [confirmRuns, setConfirmRuns] = useState<any[]>([]);
+  const [confirmHistoryLoading, setConfirmHistoryLoading] = useState(false);
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [opConfig, setOpConfig] = useState<OperationalConfig>(DEFAULT_OPERATIONAL);
+  const [opSaving, setOpSaving] = useState(false);
+  const [opSending, setOpSending] = useState(false);
+  const [opPreview, setOpPreview] = useState('');
+  const [opPreviewLoading, setOpPreviewLoading] = useState(false);
+  const [opSelectedDate, setOpSelectedDate] = useState(() => brDateStr(-1)); // default: ontem
+  const [opBannerNonce, setOpBannerNonce] = useState(0);
   const { showAlert, showConfirm } = useDialog();
   const workerUrl = import.meta.env.VITE_WORKER_URL;
   const connState = status?.instance?.state || status?.state || '';
@@ -140,6 +189,7 @@ export default function AdminMensagensConfig() {
 
   useEffect(() => {
     loadConfig();
+    fetchKits().then(setKitsCadastrados).catch(e => console.error('Erro ao carregar kits', e));
   }, []);
 
   useEffect(() => {
@@ -173,7 +223,10 @@ export default function AdminMensagensConfig() {
   const loadConfig = async () => {
     setLoading(true);
     try {
-      const [snap, numbersSnap] = await Promise.all([getDoc(settingsRef), getDoc(numbersRef)]);
+      const [snap, numbersSnap, opSnap] = await Promise.all([getDoc(settingsRef), getDoc(numbersRef), getDoc(operationalSummaryRef)]);
+      if (opSnap.exists()) {
+        setOpConfig({ ...DEFAULT_OPERATIONAL, ...(opSnap.data() as Partial<OperationalConfig>) });
+      }
       if (snap.exists()) {
         const savedConfig = snap.data() as Partial<WhatsAppConfig>;
         setConfig(prev => ({ ...prev, ...savedConfig }));
@@ -187,8 +240,18 @@ export default function AdminMensagensConfig() {
         setNumberInstances(loadedInstances);
       }
       const registrationsQuery = query(collection(db, 'nightrun_registrations'), orderBy('createdAt', 'desc'));
-      const registrationsSnap = await getDocs(registrationsQuery);
+      const [registrationsSnap, modalidadesSnap, camisetasSnap] = await Promise.all([
+        getDocs(registrationsQuery),
+        getDocs(collection(db, 'nightrun_modalidades')).catch(() => null),
+        getDocs(collection(db, 'nightrun_camisetas')).catch(() => null),
+      ]);
       setRegistrations(registrationsSnap.docs.map(item => ({ id: item.id, ...item.data() })));
+      if (modalidadesSnap) {
+        const map: Record<string, string> = {};
+        modalidadesSnap.docs.forEach(item => { map[item.id] = String(item.data().nome || ''); });
+        setModalidadesMap(map);
+      }
+      if (camisetasSnap) setCamisetas(camisetasSnap.docs.map(item => ({ id: item.id, ...item.data() })));
       await checkStatus();
       await refreshNumberStatuses(loadedInstances);
     } catch (e) {
@@ -409,6 +472,18 @@ export default function AdminMensagensConfig() {
     return instances.filter(item => item.active);
   };
 
+  // Instancia ativa efetivamente conectada (state 'open'), considerando o status por-instancia
+  // (a instancia conectada pode nao ser a padrao). Fallback para o status global.
+  const getConnectedInstance = () => {
+    const fromInstances = getAvailableInstances().find(item => getInstanceState(item.instanceName) === 'open');
+    if (fromInstances) return fromInstances;
+    if (isConnected) {
+      const label = config.instanceName || DEFAULT_CONFIG.instanceName;
+      return { id: 'principal', label, instanceName: label, active: true } as WhatsAppNumberInstance;
+    }
+    return null;
+  };
+
   const sendTest = async () => {
     if (!config.testPhone.trim()) return showAlert('Informe um telefone de teste.', 'warning');
     if (!config.testMessage.trim()) return showAlert('Digite a mensagem de teste.', 'warning');
@@ -477,6 +552,265 @@ export default function AdminMensagensConfig() {
       }
     });
   };
+
+  // --- Mensagem de confirmação de dados (para inscritos confirmados) ---
+  const kitNomeOf = (registration: any) => resolveKitNome(kitsCadastrados, registration.kit, registration.kitNome);
+  const camisetaLabelOf = (registration: any) => {
+    const found = findCamisetaByValue(camisetas, registration.tamanhoCamiseta, registration.tamanhoCamisetaTipo);
+    return formatCamisetaLabel(registration.tamanhoCamiseta, found || undefined);
+  };
+  const buildConfirmationFor = (registration: any) => buildDataConfirmationMessage(registration, {
+    modalidadeNome: modalidadesMap[registration.modalidadeId] || registration.modalidadeNome,
+    kitNome: kitNomeOf(registration),
+    camisetaLabel: camisetaLabelOf(registration),
+  });
+
+  const confirmationRecipients = useMemo(
+    () => registrations.filter(r => r.paymentStatus === 'pago' && normalizePhone(r.telefone)),
+    [registrations],
+  );
+
+  const confirmPreviewRegistration = useMemo(() => {
+    if (confirmationRecipients.length === 0) return null;
+    return confirmationRecipients.find(r => r.id === confirmPreviewId) || confirmationRecipients[0];
+  }, [confirmationRecipients, confirmPreviewId]);
+
+  const loadConfirmationHistory = async () => {
+    setConfirmHistoryLoading(true);
+    try {
+      const snap = await getDocs(query(dataConfirmationRunsRef, orderBy('createdAt', 'desc'), firestoreLimit(50)));
+      setConfirmRuns(snap.docs.map(item => ({ id: item.id, ...item.data() })));
+    } catch (e) {
+      console.error('[Confirmacao] historico', e);
+    } finally {
+      setConfirmHistoryLoading(false);
+    }
+  };
+
+  const sendDataConfirmation = () => {
+    const connectedInstance = getConnectedInstance();
+    if (!connectedInstance) return showAlert('Conecte o WhatsApp antes de enviar.', 'warning');
+    if (confirmationRecipients.length === 0) return showAlert('Nenhum inscrito confirmado com telefone valido.', 'warning');
+
+    showConfirm(
+      `Enviar a mensagem de confirmacao de dados para ${confirmationRecipients.length} inscrito(s) confirmado(s)? O envio respeita 30s entre cada mensagem.`,
+      async () => {
+        setConfirmSending(true);
+        try {
+          const messages = confirmationRecipients.map(registration => ({
+            phone: normalizePhone(registration.telefone),
+            text: buildConfirmationFor(registration),
+            alunoNome: registration.nome,
+            registrationId: registration.id,
+            instanceName: connectedInstance.instanceName,
+            type: 'data_confirmation',
+          }));
+
+          const res = await fetchWithTimeout(`${workerUrl}/queue/enqueue`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages }),
+          }, 20000);
+          if (!res.ok) throw new Error('Falha ao enfileirar as mensagens.');
+
+          // Registra o disparo no historico.
+          await addDoc(dataConfirmationRunsRef, {
+            createdAt: new Date(),
+            total: messages.length,
+            recipientIds: confirmationRecipients.map(r => r.id),
+            recipients: confirmationRecipients.map(r => ({ id: r.id, nome: r.nome || '', telefone: normalizePhone(r.telefone) })),
+          });
+
+          showAlert(`${messages.length} mensagens enfileiradas. Serao enviadas com 30s de intervalo pelo numero conectado.`, 'success');
+          await loadConfirmationHistory();
+        } catch (e: any) {
+          showAlert(e.message || 'Erro ao enviar as mensagens de confirmacao.', 'error');
+        } finally {
+          setConfirmSending(false);
+        }
+      },
+    );
+  };
+
+  // Telefones que JA receberam a confirmacao (envios com sucesso registrados no whatsapp_logs).
+  // Fonte da verdade para nao reenviar para quem ja recebeu.
+  const fetchAlreadySentConfirmationPhones = async (): Promise<Set<string>> => {
+    const phones = new Set<string>();
+    try {
+      const since = new Date(Date.now() - 5 * 86400000).toISOString();
+      const snap = await getDocs(query(
+        collection(db, 'whatsapp_logs'),
+        where('dataHora', '>=', since),
+        orderBy('dataHora', 'desc'),
+        firestoreLimit(8000),
+      ));
+      snap.docs.forEach(item => {
+        const data = item.data();
+        if (data.status !== 'SUCESSO') return;
+        if (!String(data.mensagem || '').includes('DADOS - MCU NIGHT RUN')) return;
+        const phone = normalizePhone(String(data.destinatario || ''));
+        if (phone) phones.add(phone);
+      });
+    } catch (e) {
+      console.error('[Confirmacao] whatsapp_logs', e);
+      throw new Error('Nao foi possivel verificar quem ja recebeu (logs). Tente novamente.');
+    }
+    return phones;
+  };
+
+  // Garante o estado pausado/rodando da fila de forma deterministica (o endpoint so alterna).
+  const setQueuePausedState = async (target: boolean) => {
+    const res = await fetchWithTimeout(`${workerUrl}/queue/list`, {}, 15000);
+    const data = await res.json().catch(() => ({}));
+    if (Boolean(data.paused) !== target) {
+      await fetchWithTimeout(`${workerUrl}/queue/toggle-pause`, { method: 'POST' }, 15000);
+    }
+  };
+
+  const cancelAndResend = () => {
+    const connectedInstance = getConnectedInstance();
+    if (!connectedInstance) return showAlert('Conecte o WhatsApp antes de reenviar.', 'warning');
+    if (confirmationRecipients.length === 0) return showAlert('Nenhum inscrito confirmado com telefone valido.', 'warning');
+
+    showConfirm(
+      'Cancelar a fila atual e reenviar (com acentos) apenas para quem ainda NAO recebeu? As mensagens pendentes antigas serao descartadas.',
+      async () => {
+        setConfirmSending(true);
+        setLoading(true);
+        try {
+          // 1. Pausa para parar imediatamente o envio das mensagens antigas.
+          await setQueuePausedState(true);
+          // 2. Descobre quem ja recebeu (antes de limpar).
+          const sentPhones = await fetchAlreadySentConfirmationPhones();
+          // 3. Descarta a fila antiga (texto sem acento) em lotes, ate esvaziar.
+          for (let guard = 0; guard < 200; guard++) {
+            const clearRes = await fetchWithTimeout(`${workerUrl}/queue/clear`, { method: 'POST' }, 30000);
+            const clearData = await clearRes.json().catch(() => ({}));
+            if (clearData.done || Number(clearData.cleared || 0) === 0) break;
+          }
+          // 4. Reenfileira, com o texto novo, apenas quem ainda nao recebeu.
+          const toSend = confirmationRecipients.filter(r => !sentPhones.has(normalizePhone(r.telefone)));
+          if (toSend.length > 0) {
+            const messages = toSend.map(registration => ({
+              phone: normalizePhone(registration.telefone),
+              text: buildConfirmationFor(registration),
+              alunoNome: registration.nome,
+              registrationId: registration.id,
+              instanceName: connectedInstance.instanceName,
+              type: 'data_confirmation',
+            }));
+            const res = await fetchWithTimeout(`${workerUrl}/queue/enqueue`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ messages }),
+            }, 120000);
+            if (!res.ok) throw new Error('Falha ao reenfileirar as mensagens.');
+            await addDoc(dataConfirmationRunsRef, {
+              createdAt: new Date(),
+              total: messages.length,
+              puladosJaReceberam: sentPhones.size,
+              tipo: 'reenvio',
+              recipientIds: toSend.map(r => r.id),
+              recipients: toSend.map(r => ({ id: r.id, nome: r.nome || '', telefone: normalizePhone(r.telefone) })),
+            });
+          }
+          // 5. Retoma a fila para os novos comecarem a sair.
+          await setQueuePausedState(false);
+          await loadQueue();
+          await loadConfirmationHistory();
+          showAlert(`Fila antiga cancelada. ${sentPhones.size} ja receberam (pulados) e ${toSend.length} foram reenfileiradas com acento.`, 'success');
+        } catch (e: any) {
+          const message = String(e?.message || '').includes('aborted')
+            ? 'A operacao demorou demais e foi interrompida. A fila foi pausada; tente novamente (o clear pode continuar rodando no servidor).'
+            : (e?.message || 'Erro ao cancelar e reenviar.');
+          showAlert(message, 'error');
+        } finally {
+          setConfirmSending(false);
+          setLoading(false);
+        }
+      },
+    );
+  };
+
+  useEffect(() => {
+    if (activeTab === 'automacoes' && automacaoView === 'confirmacao') {
+      loadConfirmationHistory().catch(e => console.error('[Confirmacao] load', e));
+      loadQueue().catch(e => console.error('[Confirmacao] queue', e));
+      // Atualiza o status real de cada instancia para saber qual numero esta conectado.
+      if (numberInstances.length) refreshNumberStatuses(numberInstances).catch(e => console.error('[Confirmacao] status', e));
+    }
+  }, [activeTab, automacaoView]);
+
+  // --- Resumo operacional diario ---
+  // O banner (logo + titulo + data real) e gerado pelo proprio worker a cada envio/preview,
+  // entao a previa aqui e so uma <img> apontando pro endpoint - sem html2canvas/upload no cliente.
+  const loadOperationalPreview = async (dateStr = opSelectedDate) => {
+    if (!workerUrl) return;
+    setOpPreviewLoading(true);
+    try {
+      const res = await fetchWithTimeout(`${workerUrl}/operational-summary/preview?date=${dateStr}`, {}, 20000);
+      const data = await res.json();
+      setOpPreview(data.preview || '');
+    } catch (e) {
+      console.error('[OpSummary] preview', e);
+      setOpPreview('');
+    } finally {
+      setOpPreviewLoading(false);
+      setOpBannerNonce(n => n + 1);
+    }
+  };
+
+  const saveOperationalConfig = async () => {
+    if (opConfig.enabled && !opConfig.phone.trim()) return showAlert('Informe o numero que vai receber o resumo.', 'warning');
+    if (opConfig.enabled && !/^\d{2}:\d{2}$/.test(opConfig.time)) return showAlert('Informe um horario valido (HH:MM).', 'warning');
+    setOpSaving(true);
+    try {
+      const payload: OperationalConfig = {
+        enabled: opConfig.enabled,
+        time: opConfig.time,
+        phone: normalizePhone(opConfig.phone),
+        instanceName: opConfig.instanceName || (getConnectedInstance()?.instanceName || ''),
+        bannerUrl: '',
+      };
+      await setDoc(operationalSummaryRef, payload, { merge: true });
+      setOpConfig(prev => ({ ...prev, ...payload }));
+      showAlert('Configuracao do resumo operacional salva.', 'success');
+    } catch (e: any) {
+      showAlert(e.message || 'Erro ao salvar a configuracao.', 'error');
+    } finally {
+      setOpSaving(false);
+    }
+  };
+
+  // Envio manual: hoje ou qualquer data passada, escolhida no seletor.
+  const sendManualOperationalSummary = () => {
+    if (!opConfig.phone.trim()) return showAlert('Salve um numero antes de enviar.', 'warning');
+    const [y, m, d] = opSelectedDate.split('-');
+    showConfirm(`Enviar o resumo operacional de ${d}/${m}/${y} para o numero configurado?`, async () => {
+      setOpSending(true);
+      try {
+        const res = await fetchWithTimeout(`${workerUrl}/operational-summary/send-manual`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: opSelectedDate }),
+        }, 60000);
+        const data = await res.json();
+        if (data.success) showAlert('Resumo enviado para o WhatsApp configurado.', 'success');
+        else showAlert(data.error || data.skipped || 'Nao foi possivel enviar o resumo.', 'warning');
+      } catch (e: any) {
+        showAlert(e.message || 'Erro ao enviar o resumo.', 'error');
+      } finally {
+        setOpSending(false);
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (activeTab === 'resumo') {
+      loadOperationalPreview(opSelectedDate).catch(e => console.error('[OpSummary] load', e));
+      if (numberInstances.length) refreshNumberStatuses(numberInstances).catch(() => undefined);
+    }
+  }, [activeTab, opSelectedDate]);
 
   const loadQueue = async () => {
     if (!workerUrl) return;
@@ -598,6 +932,7 @@ export default function AdminMensagensConfig() {
             { id: 'teste', label: 'TESTE', icon: <TestTube2 size={18} /> },
             { id: 'api', label: 'EVOLUTION API', icon: <KeyRound size={18} /> },
             { id: 'automacoes', label: 'AUTOMACOES', icon: <Clock size={18} /> },
+            { id: 'resumo', label: 'RESUMO DIARIO', icon: <ClipboardCheck size={18} /> },
           ].map(tab => (
             <button
               key={tab.id}
@@ -676,29 +1011,289 @@ export default function AdminMensagensConfig() {
             </SectionCard>
           )}
 
-          {activeTab === 'automacoes' && (
-            <SectionCard title="Avisos de inscricao" icon={<Clock size={20} />}>
-              <div style={{ padding: 18, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 16, marginBottom: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 18, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
-                  <div style={{ flex: 1, minWidth: 220 }}>
-                    <div style={{ color: '#071A45', fontWeight: 900, marginBottom: 4 }}>Receber aviso de inscricao</div>
-                    <div style={{ color: '#64748b', fontSize: '.84rem', lineHeight: 1.4 }}>Envia a ficha do atleta para um numero assim que a inscricao chega na etapa de pagamento.</div>
-                  </div>
-                  <FormSwitch
-                    checked={config.receiveRegistrationNoticeEnabled}
-                    onChange={value => updateConfig('receiveRegistrationNoticeEnabled', value)}
-                    label=""
-                  />
+          {activeTab === 'resumo' && (
+            <SectionCard title="Resumo operacional diario" icon={<ClipboardCheck size={20} />}>
+              <div style={{ padding: 16, background: '#eff6ff', borderRadius: 16, color: '#1d4ed8', fontSize: '.85rem', fontWeight: 700, lineHeight: 1.5, marginBottom: 20 }}>
+                Todo dia, no horario escolhido, o sistema envia (pelo servidor, mesmo com o PC desligado) o resumo do
+                <strong> dia anterior</strong> para o WhatsApp abaixo. Voce tambem pode disparar manualmente o resumo de
+                <strong> hoje ou de qualquer data passada</strong> escolhendo a data logo abaixo.
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 18, alignItems: 'center', flexWrap: 'wrap', padding: 16, background: opConfig.enabled ? '#f0fdf4' : '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 16, marginBottom: 18 }}>
+                <div>
+                  <div style={{ color: '#071A45', fontWeight: 900, marginBottom: 4 }}>Envio automatico diario</div>
+                  <div style={{ color: '#64748b', fontSize: '.84rem' }}>{opConfig.enabled ? 'Ativo' : 'Desativado'}{opConfig.lastSentDate ? ` - ultimo envio: ${opConfig.lastSentDate}` : ''}</div>
                 </div>
-                <Field label="Numero que recebera o aviso">
-                  <FormInput
-                    value={config.registrationNoticePhone}
-                    onChange={e => updateConfig('registrationNoticePhone', e.target.value)}
-                    placeholder="5533999999999"
-                  />
+                <FormSwitch checked={opConfig.enabled} onChange={value => setOpConfig(prev => ({ ...prev, enabled: value }))} label="" />
+              </div>
+
+              <ResponsiveGrid>
+                <Field label="Horario de envio automatico (HH:MM)">
+                  <input type="time" value={opConfig.time} onChange={e => setOpConfig(prev => ({ ...prev, time: e.target.value }))} className="admin-input" style={{ width: '100%', height: 46, padding: '0 14px', borderRadius: 12, border: '1px solid #e2e8f0', color: '#071A45', fontWeight: 800 }} />
                 </Field>
+                <Field label="Numero que recebe o resumo">
+                  <FormInput value={opConfig.phone} onChange={e => setOpConfig(prev => ({ ...prev, phone: e.target.value }))} placeholder="5533999999999" />
+                </Field>
+              </ResponsiveGrid>
+
+              <Field label="Numero que envia">
+                <select
+                  value={opConfig.instanceName || getConnectedInstance()?.instanceName || ''}
+                  onChange={e => setOpConfig(prev => ({ ...prev, instanceName: e.target.value }))}
+                  className="admin-input"
+                  style={{ width: '100%', height: 46, padding: '0 14px', borderRadius: 12, border: '1px solid #e2e8f0', color: '#071A45', fontWeight: 800 }}
+                >
+                  {getAvailableInstances().map(item => (
+                    <option key={item.id} value={item.instanceName}>{(item.label || item.instanceName)} - {getInstanceState(item.instanceName)}</option>
+                  ))}
+                </select>
+              </Field>
+
+              <button className="whatsapp-primary-btn" onClick={saveOperationalConfig} disabled={opSaving} style={{ marginTop: 4 }}>
+                <Save size={16} /> {opSaving ? 'Salvando...' : 'Salvar configuracao'}
+              </button>
+
+              <div style={{ height: 1, background: '#f1f5f9', margin: '26px 0' }} />
+
+              <h3 style={{ margin: '0 0 4px', fontSize: '0.95rem', fontWeight: 900, color: '#071A45' }}>Envio manual</h3>
+              <p style={{ margin: '0 0 16px', color: '#64748b', fontSize: '.82rem' }}>Escolha a data (hoje ou passada) para conferir a previa e, se quiser, disparar na hora.</p>
+
+              <Field label="Data do resumo">
+                <input
+                  type="date"
+                  value={opSelectedDate}
+                  max={brDateStr(0)}
+                  onChange={e => setOpSelectedDate(e.target.value)}
+                  className="admin-input"
+                  style={{ width: '100%', maxWidth: 220, height: 46, padding: '0 14px', borderRadius: 12, border: '1px solid #e2e8f0', color: '#071A45', fontWeight: 800 }}
+                />
+              </Field>
+
+              {/* Preview do banner (gerado pelo worker, com a data real) + da mensagem */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 300px) 1fr', gap: 18, marginTop: 8, alignItems: 'start' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>Imagem (banner)</label>
+                  <img
+                    key={opBannerNonce}
+                    src={`${workerUrl}/operational-summary/banner-preview?date=${opSelectedDate}&v=${opBannerNonce}`}
+                    alt="Banner do resumo operacional"
+                    style={{ width: '100%', maxWidth: 280, borderRadius: 16, border: '2px solid rgba(107,255,42,0.3)', display: 'block' }}
+                  />
+                  <div style={{ color: '#94a3b8', fontSize: '0.72rem', fontWeight: 700, marginTop: 8 }}>Gerado com a data real ({opSelectedDate.split('-').reverse().slice(0, 2).join('/')}) no momento do envio/previa.</div>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>Pre-visualizacao da mensagem</label>
+                  <div style={{ background: '#0b141a', borderRadius: 16, padding: 16, minHeight: 200 }}>
+                    {opPreviewLoading ? (
+                      <div style={{ color: '#8696a0', textAlign: 'center', padding: 24, fontWeight: 700 }}>Carregando...</div>
+                    ) : opPreview ? (
+                      <div style={{ background: '#005c4b', color: '#e9edef', borderRadius: 12, padding: '12px 14px', whiteSpace: 'pre-wrap', fontSize: '0.82rem', lineHeight: 1.5 }}>{opPreview}</div>
+                    ) : (
+                      <div style={{ color: '#8696a0', textAlign: 'center', padding: 24, fontWeight: 700 }}>Sem previa disponivel.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 22 }}>
+                <button className="whatsapp-secondary-btn" onClick={() => loadOperationalPreview(opSelectedDate)} disabled={opPreviewLoading}>
+                  <RefreshCcw size={16} /> Atualizar previa
+                </button>
+                <button className="whatsapp-primary-btn" onClick={sendManualOperationalSummary} disabled={opSending || !getConnectedInstance()} style={{ flex: 1, minWidth: 200, background: '#25D366', color: '#071A45' }}>
+                  <Send size={16} /> {opSending ? 'Enviando...' : `Enviar resumo de ${opSelectedDate.split('-').reverse().slice(0, 2).join('/')}`}
+                </button>
               </div>
             </SectionCard>
+          )}
+
+          {activeTab === 'automacoes' && (
+            <div style={{ display: 'grid', gap: 20 }}>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {([['avisos', 'AVISOS DE INSCRIÇÃO', <Clock size={16} />], ['confirmacao', 'MENSAGEM DE CONFIRMAÇÃO DE DADOS', <ClipboardCheck size={16} />]] as const).map(([id, label, icon]) => (
+                  <button
+                    key={id}
+                    onClick={() => setAutomacaoView(id)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 8, border: 'none', cursor: 'pointer',
+                      padding: '11px 18px', borderRadius: 12, fontWeight: 900, fontSize: '0.76rem',
+                      background: automacaoView === id ? '#071A45' : '#f1f5f9',
+                      color: automacaoView === id ? '#fff' : '#64748b',
+                    }}
+                  >
+                    {icon} {label}
+                  </button>
+                ))}
+              </div>
+
+              {automacaoView === 'avisos' && (
+                <SectionCard title="Avisos de inscricao" icon={<Clock size={20} />}>
+                  <div style={{ padding: 18, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 18, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <div style={{ color: '#071A45', fontWeight: 900, marginBottom: 4 }}>Receber aviso de inscricao</div>
+                        <div style={{ color: '#64748b', fontSize: '.84rem', lineHeight: 1.4 }}>Envia a ficha do atleta para um numero assim que a inscricao chega na etapa de pagamento.</div>
+                      </div>
+                      <FormSwitch
+                        checked={config.receiveRegistrationNoticeEnabled}
+                        onChange={value => updateConfig('receiveRegistrationNoticeEnabled', value)}
+                        label=""
+                      />
+                    </div>
+                    <Field label="Numero que recebera o aviso">
+                      <FormInput
+                        value={config.registrationNoticePhone}
+                        onChange={e => updateConfig('registrationNoticePhone', e.target.value)}
+                        placeholder="5533999999999"
+                      />
+                    </Field>
+                  </div>
+                </SectionCard>
+              )}
+
+              {automacaoView === 'confirmacao' && (
+                <SectionCard title="Mensagem de confirmacao de dados" icon={<ClipboardCheck size={20} />}>
+                  <div style={{ padding: 16, background: '#eff6ff', borderRadius: 16, color: '#1d4ed8', fontSize: '.85rem', fontWeight: 700, lineHeight: 1.5, marginBottom: 20 }}>
+                    Envia para <strong>todos os inscritos confirmados</strong> uma mensagem com a lista de dados da inscricao de cada um.
+                    O envio usa o numero conectado e respeita 30 segundos entre uma mensagem e outra.
+                  </div>
+
+                  {(() => {
+                    const connectedInstance = getConnectedInstance();
+                    return (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 22 }}>
+                        <MiniStat label="Confirmados com telefone" value={String(confirmationRecipients.length)} tone="#2563eb" />
+                        <MiniStat label="Numero de envio" value={connectedInstance ? (connectedInstance.label || connectedInstance.instanceName) : 'Desconectado'} tone={connectedInstance ? '#16a34a' : '#dc2626'} />
+                        <MiniStat label="Intervalo entre envios" value="30 segundos" tone="#b45309" />
+                      </div>
+                    );
+                  })()}
+
+                  {/* Preview */}
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+                      <label style={{ fontSize: '0.72rem', fontWeight: 900, color: '#64748b', textTransform: 'uppercase' }}>Pre-visualizacao da mensagem</label>
+                      {confirmationRecipients.length > 0 && (
+                        <select
+                          value={confirmPreviewRegistration?.id || ''}
+                          onChange={e => setConfirmPreviewId(e.target.value)}
+                          className="admin-input"
+                          style={{ height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid #e2e8f0', color: '#071A45', fontWeight: 800, maxWidth: 260 }}
+                        >
+                          {confirmationRecipients.slice(0, 100).map(r => (
+                            <option key={r.id} value={r.id}>{r.nome || 'Atleta'}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div style={{ background: '#0b141a', borderRadius: 16, padding: 16 }}>
+                      {confirmPreviewRegistration ? (
+                        <div style={{ background: '#005c4b', color: '#e9edef', borderRadius: 12, padding: '12px 14px', maxWidth: 460, marginLeft: 'auto', whiteSpace: 'pre-wrap', fontSize: '0.82rem', lineHeight: 1.5, fontFamily: 'inherit', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                          {buildConfirmationFor(confirmPreviewRegistration)}
+                        </div>
+                      ) : (
+                        <div style={{ color: '#8696a0', textAlign: 'center', padding: 24, fontWeight: 700 }}>
+                          Nenhum inscrito confirmado com telefone para pre-visualizar.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    className="whatsapp-primary-btn"
+                    onClick={sendDataConfirmation}
+                    disabled={confirmSending || !getConnectedInstance() || confirmationRecipients.length === 0}
+                    style={{ width: '100%', opacity: (!getConnectedInstance() || confirmationRecipients.length === 0) ? 0.5 : 1 }}
+                  >
+                    <Send size={16} /> {confirmSending ? 'Enfileirando...' : `Enviar para ${confirmationRecipients.length} confirmado(s)`}
+                  </button>
+
+                  {/* Controle da fila: pausar / retomar o envio ja disparado */}
+                  <div style={{ marginTop: 14, padding: 16, border: '1px solid #e2e8f0', borderRadius: 16, background: queuePaused ? '#fff7ed' : '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ color: '#071A45', fontWeight: 900, fontSize: '0.9rem' }}>
+                        Envio {queuePaused ? 'PAUSADO' : 'em andamento'} · {queueItems.length} na fila
+                      </div>
+                      <div style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 700 }}>
+                        As mensagens saem sozinhas no servidor (30s entre cada). Voce pode pausar e retomar quando quiser.
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <button className="whatsapp-secondary-btn" onClick={loadQueue} disabled={queueLoading}>
+                        <RefreshCcw size={15} /> Atualizar
+                      </button>
+                      <button
+                        className={queuePaused ? 'whatsapp-primary-btn' : 'whatsapp-secondary-btn'}
+                        onClick={toggleQueuePause}
+                        disabled={queueLoading}
+                        style={queuePaused ? { background: '#16a34a' } : { color: '#c2410c' }}
+                      >
+                        {queuePaused ? <Play size={15} /> : <Clock size={15} />} {queuePaused ? 'Retomar fila' : 'Pausar fila'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    className="whatsapp-secondary-btn"
+                    onClick={cancelAndResend}
+                    disabled={confirmSending || !getConnectedInstance()}
+                    style={{ width: '100%', marginTop: 10, color: '#c2410c', border: '1px solid #fed7aa', background: '#fff7ed' }}
+                  >
+                    <Trash2 size={15} /> Cancelar fila e reenviar (pulando quem já recebeu)
+                  </button>
+                  <div style={{ color: '#94a3b8', fontSize: '0.74rem', fontWeight: 700, marginTop: 6, lineHeight: 1.4 }}>
+                    Descarta as mensagens pendentes antigas e recria a fila com o texto corrigido (acentos), enviando apenas para quem ainda não recebeu.
+                  </div>
+
+                  {/* Historico */}
+                  <div style={{ marginTop: 28 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, color: '#071A45', fontSize: '0.9rem', fontWeight: 950 }}>
+                        <History size={16} /> Historico de envios
+                      </h3>
+                      <button className="whatsapp-secondary-btn" onClick={loadConfirmationHistory} disabled={confirmHistoryLoading}>
+                        <RefreshCcw size={15} /> Atualizar
+                      </button>
+                    </div>
+                    <div style={{ border: '1px solid #e2e8f0', borderRadius: 16, overflow: 'hidden' }}>
+                      {confirmRuns.length === 0 ? (
+                        <div style={{ padding: 24, textAlign: 'center', color: '#64748b', fontWeight: 800 }}>
+                          {confirmHistoryLoading ? 'Carregando...' : 'Nenhum envio realizado ainda.'}
+                        </div>
+                      ) : (
+                        confirmRuns.map(run => {
+                          const runDate = run.createdAt?.toDate?.() || (run.createdAt ? new Date(run.createdAt) : null);
+                          const isOpen = expandedRunId === run.id;
+                          return (
+                            <div key={run.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                              <button
+                                onClick={() => setExpandedRunId(isOpen ? null : run.id)}
+                                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', background: isOpen ? '#f8fafc' : '#fff', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                              >
+                                <div>
+                                  <div style={{ color: '#071A45', fontWeight: 900, fontSize: '0.88rem' }}>{run.total} mensagem(ns) enviada(s)</div>
+                                  <div style={{ color: '#64748b', fontSize: '0.76rem', fontWeight: 700 }}>{runDate ? formatDateTimeBR(runDate) : '-'}</div>
+                                </div>
+                                <span style={{ color: '#2563eb', fontSize: '0.72rem', fontWeight: 900 }}>{isOpen ? 'OCULTAR' : 'VER DESTINATARIOS'}</span>
+                              </button>
+                              {isOpen && (
+                                <div style={{ padding: '4px 16px 16px', display: 'grid', gap: 6 }}>
+                                  {(run.recipients || []).map((recipient: any, index: number) => (
+                                    <div key={recipient.id || index} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '8px 12px', background: '#f8fafc', borderRadius: 10, fontSize: '0.8rem' }}>
+                                      <span style={{ color: '#071A45', fontWeight: 800 }}>{recipient.nome || 'Atleta'}</span>
+                                      <span style={{ color: '#64748b', fontWeight: 700 }}>{recipient.telefone || '-'}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </SectionCard>
+              )}
+            </div>
           )}
 
           {activeTab === 'numeros' && (
@@ -955,6 +1550,16 @@ function SummaryCard({ icon, label, value, tone }: { icon: ReactNode; label: str
         <div style={{ color: '#94a3b8', fontSize: '.7rem', fontWeight: 900, textTransform: 'uppercase' }}>{label}</div>
         <div style={{ color: '#071A45', fontSize: '1rem', fontWeight: 900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
       </div>
+    </div>
+  );
+}
+
+
+function MiniStat({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div style={{ padding: 14, border: '1px solid #e2e8f0', borderRadius: 14, background: '#f8fafc', borderLeft: `4px solid ${tone}` }}>
+      <div style={{ color: '#94a3b8', fontSize: '.68rem', fontWeight: 900, textTransform: 'uppercase', marginBottom: 5 }}>{label}</div>
+      <div style={{ color: '#071A45', fontSize: '1rem', fontWeight: 950, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
     </div>
   );
 }

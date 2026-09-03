@@ -25,7 +25,10 @@ export interface Registration {
   };
   categoria: 'adulto' | 'infantil';
   modalidadeId: string;
-  kit: 'unico' | 'premium' | 'vip';
+  kit: string;
+  kitNome?: string;
+  kitPrecoForcado?: boolean;
+  kitPrecoForcadoValor?: number;
   tamanhoCamiseta: string;
   saude: {
     temAlergia: boolean; alergiaDesc: string;
@@ -55,6 +58,9 @@ export interface Kit {
   descricao: string;
   preco: number;
   itens: string[];
+  ativo?: boolean;
+  precoForcado?: boolean;
+  precoForcadoValor?: number;
 }
 
 export interface WhatsAppMessage {

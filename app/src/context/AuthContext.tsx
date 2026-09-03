@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
 interface AuthContextType {
@@ -28,42 +28,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setLoading(true);
-      if (firebaseUser) {
-        setUser(firebaseUser);
-        console.log("Auth: Usuário detectado:", firebaseUser.email);
-        
-        try {
-          // 1. Verificar se é Admin
+      setUser(firebaseUser);
+
+      try {
+        // 1. Verificar se é Admin (exige sessão real do Firebase Auth - é o que as
+        // regras do Firestore usam para liberar as coleções administrativas).
+        if (firebaseUser) {
           const adminDoc = await getDoc(doc(db, 'nightrun_admins', firebaseUser.email || ''));
-          
           if (adminDoc.exists()) {
-            console.log("Auth: Papel Admin detectado");
             setRole('admin');
+            setAtletaData(null);
             localStorage.setItem('nightrun_admin_auth', 'true');
-          } else {
-            // 2. Verificar se é Atleta
-            const atletaQuery = query(collection(db, 'nightrun_registrations'), where('email', '==', firebaseUser.email));
-            const atletaSnap = await getDocs(atletaQuery);
-            if (!atletaSnap.empty) {
-              console.log("Auth: Papel Atleta detectado");
-              setRole('atleta');
-              setAtletaData({ id: atletaSnap.docs[0].id, ...atletaSnap.docs[0].data() });
-              localStorage.setItem('nightrun_atleta_auth', 'true');
-            } else {
-              console.log("Auth: Nenhum papel associado ao e-mail");
-              setRole(null);
-            }
+            setLoading(false);
+            return;
           }
-        } catch (error) {
-          console.error("AuthContext Error:", error);
-          setRole(null);
         }
-      } else {
-        setUser(null);
+
+        // 2. Verificar se é Atleta pela inscrição selecionada no login (não pelo e-mail
+        // do Firebase Auth). Um mesmo e-mail pode ter várias inscrições com CPFs
+        // diferentes, e o Firebase Auth só guarda 1 senha por e-mail - então quem valida
+        // "qual atleta é este" é o CPF já conferido no login, salvo aqui localmente.
+        const regId = localStorage.getItem('nightrun_atleta_reg_id');
+        if (regId) {
+          const regSnap = await getDoc(doc(db, 'nightrun_registrations', regId));
+          if (regSnap.exists()) {
+            setRole('atleta');
+            setAtletaData({ id: regSnap.id, ...regSnap.data() });
+            localStorage.setItem('nightrun_atleta_auth', 'true');
+            setLoading(false);
+            return;
+          }
+        }
+
         setRole(null);
         setAtletaData(null);
         localStorage.removeItem('nightrun_admin_auth');
         localStorage.removeItem('nightrun_atleta_auth');
+        localStorage.removeItem('nightrun_atleta_reg_id');
+      } catch (error) {
+        console.error("AuthContext Error:", error);
+        setRole(null);
+        setAtletaData(null);
       }
       setLoading(false);
     });

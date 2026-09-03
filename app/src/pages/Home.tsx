@@ -50,7 +50,6 @@ export default function Home() {
       try {
         const snap = await getCountFromServer(collection(db, 'nightrun_registrations'));
         const registrationsCount = snap.data().count;
-        setVagas(1000 - registrationsCount);
 
         const lotesSnap = await getDoc(doc(db, 'nightrun_settings', 'lotes'));
         if (lotesSnap.exists()) {
@@ -62,7 +61,7 @@ export default function Home() {
           const remainingInLot = activeLot ? Math.max(activeLot.max - registrationsCount, 0) : Number.POSITIVE_INFINITY;
           setShowUrgencyBanner(Boolean(lotes.forceUrgencyBanner) || remainingInLot <= 10);
         }
-      } catch (e) { console.error('Erro ao buscar vagas', e); setVagas(1000); }
+      } catch (e) { console.error('Erro ao buscar vagas', e); }
     })();
   }, []);
 

@@ -2,18 +2,21 @@ import { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Cropper, { type Area } from 'react-easy-crop';
 import { useParams, useNavigate } from 'react-router-dom';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, query, where, orderBy, updateDoc, deleteDoc } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
+import { doc, getDoc, collection, getDocs, query, where, orderBy, updateDoc, deleteDoc, arrayUnion, increment } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { KITS, CATEGORIAS } from '../types';
+import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import { useDialog } from '../context/CustomDialogContext';
+import { useAuth } from '../context/AuthContext';
+import SendCardChoiceModal from '../components/SendCardChoiceModal';
 import { formatDateBR, toDateValue } from '../utils/dateUtils';
-import { formatCamisetaLabel } from '../utils/camisetaUtils';
+import { findCamisetaByValue, formatCamisetaLabel } from '../utils/camisetaUtils';
 import {
   ArrowLeft, Edit, Trash2, Send, Save, X, Phone,
   User, Mail, Calendar, MapPin, ClipboardList,
   MessageCircle, Clock, Zap, Activity, Trophy,
-  Settings, CreditCard, ChevronRight, ExternalLink, LogIn
+  Settings, CreditCard, ChevronRight, ExternalLink, LogIn, Repeat
 } from 'lucide-react';
 
 // Sub-components
@@ -29,7 +32,9 @@ import { AtletaExtraInfo } from '../components/AdminAtletaDetalhes/AtletaExtraIn
 import { AtletaEditModal } from '../components/AdminAtletaDetalhes/AtletaEditModal';
 import { AtletaPaymentModal } from '../components/AdminAtletaDetalhes/AtletaPaymentModal';
 import { AtletaFicha } from '../components/AdminAtletaDetalhes/AtletaFicha';
+import TransferTitularidadeModal from '../components/AdminAtletaDetalhes/TransferTitularidadeModal';
 import { AdminPageSkeleton } from '../components/Skeleton';
+import { buildNewOwnerTransferMessage, buildOldOwnerTransferMessage, buildWhatsAppUrl } from '../utils/titularidadeUtils';
 
 import '../styles/atleta-detalhes.css';
 
@@ -74,16 +79,21 @@ export default function AdminAtletaDetalhes() {
   const [loading, setLoading] = useState(true);
   const [observations, setObservations] = useState<string[]>([]);
   const [camisetas, setCamisetas] = useState<any[]>([]);
+  const [kitsCadastrados, setKitsCadastrados] = useState<KitRecord[]>([]);
   const [camisetaCounts, setCamisetaCounts] = useState<Record<string, number>>({});
   const [modalidades, setModalidades] = useState<any[]>([]);
   const [winnerData, setWinnerData] = useState<any>(null);
+  const [linkedTitularidade, setLinkedTitularidade] = useState<{ nome?: string; telefone?: string } | null>(null);
   const [vagaId, setVagaId] = useState<number | null>(null);
   const [zoomImageUrl, setZoomImageUrl] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const { showAlert, showConfirm } = useDialog();
+  const { user } = useAuth();
+  const [sendChoiceCardUrl, setSendChoiceCardUrl] = useState<string | null>(null);
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
   const [showZoomPhoto, setShowZoomPhoto] = useState(false);
   const [editForm, setEditForm] = useState({
     categoria: '', kit: '', tamanhoCamiseta: '', nome: '', email: '', telefone: '',
@@ -103,7 +113,7 @@ export default function AdminAtletaDetalhes() {
 
   const toggleCollapse = (sec: string) => setCollapsed({ ...collapsed, [sec]: !collapsed[sec] });
 
-  useEffect(() => { loadAtleta(); loadCamisetas(); loadModalidades(); loadCamisetaCounts(); }, [id]);
+  useEffect(() => { loadAtleta(); loadCamisetas(); loadModalidades(); loadCamisetaCounts(); loadKits(); }, [id]);
 
   const loadAtleta = async () => {
     if (!id) return;
@@ -131,6 +141,27 @@ export default function AdminAtletaDetalhes() {
         if (!winnerSnap.empty) {
           setWinnerData(winnerSnap.docs[0].data());
         }
+
+        // Busca nome/telefone ATUAIS da inscrição vinculada por titularidade (não confia so no
+        // snapshot salvo na hora da transferência, que pode faltar em transferências antigas ou
+        // ficar desatualizado se o telefone mudar depois).
+        const linkedId = (data as any).titularidadeTransferidaParaId || (data as any).titularidadeRecebidaDeId;
+        if (linkedId) {
+          try {
+            const linkedSnap = await getDoc(doc(db, 'nightrun_registrations', linkedId));
+            if (linkedSnap.exists()) {
+              const linkedData = linkedSnap.data() as any;
+              setLinkedTitularidade({ nome: linkedData.nome || '', telefone: linkedData.telefone || '' });
+            } else {
+              setLinkedTitularidade(null);
+            }
+          } catch (linkedError) {
+            console.error('[AdminAtletaDetalhes] linked titularidade fetch failed', linkedError);
+            setLinkedTitularidade(null);
+          }
+        } else {
+          setLinkedTitularidade(null);
+        }
       }
     } catch (e: any) {
       console.error(e);
@@ -144,6 +175,12 @@ export default function AdminAtletaDetalhes() {
       const order = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'BL_P', 'BL_M', 'BL_G'];
       list.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
       setCamisetas(list);
+    } catch (e) { console.error(e); }
+  };
+
+  const loadKits = async () => {
+    try {
+      setKitsCadastrados(await fetchKits());
     } catch (e) { console.error(e); }
   };
 
@@ -182,13 +219,15 @@ export default function AdminAtletaDetalhes() {
   const categoriaLabel = CATEGORIAS.find(c => c.id === reg.categoria)?.nome || reg.categoria || '';
   const modalidadeLabel = modalidades.find(m => m.id === reg.modalidadeId)?.nome || '';
   const sexoLabel = reg.sexo === 'M' ? 'Masculino' : reg.sexo === 'F' ? 'Feminino' : reg.sexo || '';
-  const kitNome = KITS.find(k => k.id === reg.kit)?.nome || reg.kit || '';
-  const selectedCamiseta = camisetas.find(t => t.id === reg.tamanhoCamiseta);
+  const kitNome = resolveKitNome(kitsCadastrados, reg.kit, reg.kitNome);
+  const selectedCamiseta = findCamisetaByValue(camisetas, reg.tamanhoCamiseta, reg.tamanhoCamisetaTipo);
   const formattedTamanho = formatCamisetaLabel(reg.tamanhoCamiseta, selectedCamiseta);
-  const statusClass = isPago ? 'confirmed' : reg.paymentStatus === 'pendente' ? 'pending' : 'cancelled';
-  const pagamentoLabel = isPago ? 'Pago' : reg.paymentStatus === 'pendente' ? 'Pendente' : 'Cancelado';
+  const isGratuito = Boolean(reg.gratuito);
+  const statusClass = isGratuito ? 'free' : isPago ? 'confirmed' : reg.paymentStatus === 'pendente' ? 'pending' : 'cancelled';
+  const pagamentoLabel = isGratuito ? 'Gratuito' : isPago ? 'Pago' : reg.paymentStatus === 'pendente' ? 'Pendente' : 'Cancelado';
   const ticketMedio = allRegs.filter(r => r.paymentStatus === 'pago').length > 0 ? (reg.amount || KITS.find(k => k.id === reg.kit)?.preco || 0) / 100 : 0;
   const idadeCadastro = reg.idadeNoCadastro ?? calculateAgeFromDate(parseBirthDate(reg.dataNascimento));
+  const shouldUseKidsCard = typeof idadeCadastro === 'number' && idadeCadastro <= 12;
   const camisetaMedida = selectedCamiseta?.medidas ? `${selectedCamiseta?.medidas.largura} x ${selectedCamiseta?.medidas.altura} cm` : '';
   const originalAmount = Number(reg.originalAmount || reg.amount || 0);
   const finalAmount = Number(reg.amount || 0);
@@ -196,6 +235,10 @@ export default function AdminAtletaDetalhes() {
   const discountLabel = reg.descontoServidorPublicoMunicipal
     ? 'Servidor pblico municipal - 20%'
     : reg.descontoAplicado || 'Sem desconto';
+  const couponDiscountAmount = Number(reg.couponDiscountAmount || 0);
+  const couponLabel = reg.descontoCupom || reg.couponCode
+    ? `${String(reg.couponCode || reg.couponId || 'Cupom').toUpperCase()} (-${formatCurrency(couponDiscountAmount)})`
+    : 'Nenhum cupom usado';
   const equipeLabel = reg.integranteEquipe === 'sim' ? (reg.equipeNome || 'Sim, no informado') : 'No';
   const paymentProvider = reg.creditCardAsaasPaymentId ? 'asaas' : reg.paymentProvider === 'cora' ? 'cora' : 'asaas';
   const paymentMethodLabel = reg.creditCardAsaasPaymentId || reg.paymentMethod === 'credit_card' ? 'Cartão' : 'PIX';
@@ -234,24 +277,18 @@ export default function AdminAtletaDetalhes() {
   };
 
   const accessAthleteProfile = () => {
-    const cleanEmail = String(reg.email || '').trim().toLowerCase();
-    const cleanCpf = String(reg.cpf || '').replace(/\D/g, '');
-    if (!cleanEmail) return showAlert('E-mail do atleta nao encontrado.', 'warning');
-    if (cleanCpf.length < 11) return showAlert('CPF do atleta invalido para login.', 'warning');
+    if (!id) return showAlert('Inscricao invalida.', 'warning');
 
+    // A area do atleta identifica a inscricao pelo ID salvo localmente (nightrun_atleta_reg_id),
+    // nao pelo login do Firebase Auth - varias inscricoes podem compartilhar o mesmo e-mail com
+    // CPFs diferentes, e o Firebase so guarda 1 senha por e-mail (tentar autenticar aqui so
+    // geraria erro 400 quando o CPF deste atleta nao for o que criou a conta daquele e-mail).
     showConfirm('Acessar o perfil deste atleta agora? Sua sessao admin sera trocada para a area do atleta.', async () => {
       try {
-        try {
-          await signInWithEmailAndPassword(auth, cleanEmail, cleanCpf);
-        } catch (authError: any) {
-          if (authError.code === 'auth/user-not-found' || authError.code === 'auth/invalid-credential' || authError.code === 'auth/wrong-password') {
-            await createUserWithEmailAndPassword(auth, cleanEmail, cleanCpf);
-          } else {
-            throw authError;
-          }
-        }
         localStorage.removeItem('nightrun_admin_auth');
         localStorage.setItem('nightrun_atleta_auth', 'true');
+        localStorage.setItem('nightrun_atleta_reg_id', String(id));
+        try { await signOut(auth); } catch {}
         navigate('/atleta/dashboard');
       } catch (error: any) {
         console.error('[AdminAtletaDetalhes] athlete impersonation failed', error);
@@ -338,6 +375,17 @@ export default function AdminAtletaDetalhes() {
     ctx.drawImage(img, sx, sy, sw, sh, x, y, width, height);
   };
 
+  const drawContain = (ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, width: number, height: number) => {
+    const scale = Math.min(width / img.naturalWidth, height / img.naturalHeight);
+    const drawWidth = img.naturalWidth * scale;
+    const drawHeight = img.naturalHeight * scale;
+    const dx = x + (width - drawWidth) / 2;
+    const dy = y + (height - drawHeight) / 2;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x, y, width, height);
+    ctx.drawImage(img, dx, dy, drawWidth, drawHeight);
+  };
+
   const drawFitText = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, initialSize: number, minSize: number, color: string) => {
     const normalizedText = text.trim().toUpperCase();
     let size = initialSize;
@@ -353,8 +401,9 @@ export default function AdminAtletaDetalhes() {
     ctx.fillText(normalizedText, x, y);
   };
 
-  const generateEuVouCard = async (photoUrl: string, modalidadeNome: string) => {
-    const [template, photo] = await Promise.all([loadImage('/modelo-card.png'), loadImage(photoUrl)]);
+  const generateEuVouCard = async (photoUrl: string, modalidadeNome: string, isKidsCard = false) => {
+    const templatePath = isKidsCard ? '/modelo-card-kids.png' : '/modelo-card.png';
+    const [template, photo] = await Promise.all([loadImage(templatePath), loadImage(photoUrl)]);
     const canvas = document.createElement('canvas');
     canvas.width = template.naturalWidth;
     canvas.height = template.naturalHeight;
@@ -375,7 +424,11 @@ export default function AdminAtletaDetalhes() {
     ctx.beginPath();
     ctx.rect(-box.width / 2, -box.height / 2, box.width, box.height);
     ctx.clip();
-    drawCover(ctx, photo, -box.width / 2, -box.height / 2, box.width, box.height);
+    if (isKidsCard) {
+      drawContain(ctx, photo, -box.width / 2, -box.height / 2, box.width, box.height);
+    } else {
+      drawCover(ctx, photo, -box.width / 2, -box.height / 2, box.width, box.height);
+    }
     ctx.restore();
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 8;
@@ -385,7 +438,7 @@ export default function AdminAtletaDetalhes() {
     ctx.save();
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
-    const modalityX = canvas.width * 0.095;
+    const modalityX = canvas.width * (isKidsCard ? 0.108 : 0.095);
     const modalityY = canvas.height * 0.412;
     ctx.font = `900 ${canvas.width * 0.018}px Arial Black, Impact, sans-serif`;
     ctx.fillStyle = '#6BFF2A';
@@ -397,6 +450,19 @@ export default function AdminAtletaDetalhes() {
       canvas.toBlob(result => result ? resolve(result) : reject(new Error('Falha ao gerar card.')), 'image/jpeg', 0.9);
     });
     return uploadMediaFile(new File([blob], `eu-vou-${Date.now()}.jpg`, { type: 'image/jpeg' }), 'nightrun_cards');
+  };
+
+  // Busca a inscrição direto do Firestore (não confia no estado local `reg`) e resolve a
+  // modalidade/idade a partir disso - evita gerar o card com dados desatualizados quando o
+  // admin edita a modalidade e, na sequência, gera o card antes do reload do estado local
+  // terminar (loadAtleta() depois de salvar não é esperado antes de fechar o modal).
+  const fetchFreshCardInputs = async () => {
+    const snap = await getDoc(doc(db, 'nightrun_registrations', id!));
+    const fresh = snap.data() || reg;
+    const freshModalidadeLabel = modalidades.find(m => m.id === fresh.modalidadeId)?.nome || '';
+    const freshIdade = fresh.idadeNoCadastro ?? calculateAgeFromDate(parseBirthDate(fresh.dataNascimento));
+    const freshShouldUseKidsCard = typeof freshIdade === 'number' && freshIdade <= 12;
+    return { fresh, modalidadeLabel: freshModalidadeLabel, shouldUseKidsCard: freshShouldUseKidsCard };
   };
 
   const buildEuVouWhatsAppText = () => {
@@ -434,6 +500,23 @@ export default function AdminAtletaDetalhes() {
     }
   };
 
+  const logEuVouCardSend = async (cardUrl: string, method: 'whatsapp_manual' | 'whatsapp_auto') => {
+    const clickedAt = new Date();
+    const historyEntry = { at: clickedAt.toISOString(), by: user?.email || 'admin', cardUrl, method };
+    await updateDoc(doc(db, 'nightrun_registrations', id!), {
+      euVouCardLastSendClickAt: clickedAt,
+      euVouCardSendClickCount: increment(1),
+      euVouCardSendHistory: arrayUnion(historyEntry),
+      updatedAt: clickedAt,
+    });
+    setReg((prev: any) => ({
+      ...prev,
+      euVouCardLastSendClickAt: clickedAt,
+      euVouCardSendClickCount: Number(prev.euVouCardSendClickCount || 0) + 1,
+      euVouCardSendHistory: [...(prev.euVouCardSendHistory || []), historyEntry],
+    }));
+  };
+
   const openWhatsAppWithEuVouCard = async (cardUrl: string) => {
     const cleanPhone = String(reg.telefone || '').replace(/\D/g, '');
     if (!cleanPhone) return showAlert('Telefone não encontrado.', 'warning');
@@ -442,6 +525,7 @@ export default function AdminAtletaDetalhes() {
     try {
       const copied = await copyEuVouCardImage(cardUrl);
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(buildEuVouWhatsAppText())}`, '_blank', 'noopener,noreferrer');
+      await logEuVouCardSend(cardUrl, 'whatsapp_manual');
       showAlert(
         copied
           ? 'WhatsApp aberto com a mensagem pronta. A imagem #EUVOU foi copiada, cole na conversa antes de enviar.'
@@ -453,16 +537,38 @@ export default function AdminAtletaDetalhes() {
     }
   };
 
-  const handleSendEuVouCard = () => {
-    if (!reg.euVouCardUrl) return showAlert('Card Eu Vou não gerado.', 'warning');
-    openWhatsAppWithEuVouCard(reg.euVouCardUrl);
+  const handleSendEuVouCard = async () => {
+    if (!reg.euVouCardUrl && !reg.fotoUrl) return showAlert('Card Eu Vou nao gerado.', 'warning');
+    let cardUrl = reg.euVouCardUrl;
+
+    const { fresh, modalidadeLabel: freshModalidadeLabel, shouldUseKidsCard: freshShouldUseKidsCard } = await fetchFreshCardInputs();
+
+    if (freshShouldUseKidsCard) {
+      if (!fresh.fotoUrl) return showAlert('O atleta precisa ter foto para gerar o card infantil.', 'warning');
+      setGeneratingEuVouCard(true);
+      try {
+        cardUrl = await generateEuVouCard(fresh.fotoUrl, freshModalidadeLabel, true);
+        await updateDoc(doc(db, 'nightrun_registrations', id!), { euVouCardUrl: cardUrl, updatedAt: new Date() });
+        setReg((prev: any) => ({ ...prev, euVouCardUrl: cardUrl, updatedAt: new Date() }));
+      } catch (e: any) {
+        showAlert(e.message || 'Erro ao gerar card infantil.', 'error');
+        setGeneratingEuVouCard(false);
+        return;
+      } finally {
+        setGeneratingEuVouCard(false);
+      }
+    }
+
+    if (!cardUrl) return showAlert('Card Eu Vou nao gerado.', 'warning');
+    setSendChoiceCardUrl(cardUrl);
   };
 
   const handleGenerateEuVouCard = async () => {
-    if (!reg.fotoUrl) return showAlert('O atleta precisa ter foto para gerar o card.', 'warning');
     setGeneratingEuVouCard(true);
     try {
-      const cardUrl = await generateEuVouCard(reg.fotoUrl, modalidadeLabel);
+      const { fresh, modalidadeLabel: freshModalidadeLabel, shouldUseKidsCard: freshShouldUseKidsCard } = await fetchFreshCardInputs();
+      if (!fresh.fotoUrl) { showAlert('O atleta precisa ter foto para gerar o card.', 'warning'); return; }
+      const cardUrl = await generateEuVouCard(fresh.fotoUrl, freshModalidadeLabel, freshShouldUseKidsCard);
       await updateDoc(doc(db, 'nightrun_registrations', id!), { euVouCardUrl: cardUrl, updatedAt: new Date() });
       setReg((prev: any) => ({ ...prev, euVouCardUrl: cardUrl, updatedAt: new Date() }));
       showConfirm('Card Eu Vou gerado. Quer enviar para o atleta agora', async () => {
@@ -508,7 +614,8 @@ export default function AdminAtletaDetalhes() {
         canvas.toBlob(result => result ? resolve(result) : reject(new Error('Falha ao cortar foto.')), 'image/jpeg', 0.92);
       });
       const fotoUrl = await uploadMediaFile(new File([blob], `foto-card-${Date.now()}.jpg`, { type: 'image/jpeg' }), 'nightrun_photos');
-      const cardUrl = await generateEuVouCard(fotoUrl, modalidadeLabel);
+      const { modalidadeLabel: freshModalidadeLabel, shouldUseKidsCard: freshShouldUseKidsCard } = await fetchFreshCardInputs();
+      const cardUrl = await generateEuVouCard(fotoUrl, freshModalidadeLabel, freshShouldUseKidsCard);
       await updateDoc(doc(db, 'nightrun_registrations', id!), { fotoUrl, euVouCardUrl: cardUrl, updatedAt: new Date() });
       setReg((prev: any) => ({ ...prev, fotoUrl, euVouCardUrl: cardUrl, updatedAt: new Date() }));
       setCardPhotoCrop(null);
@@ -549,6 +656,11 @@ export default function AdminAtletaDetalhes() {
       const { condicaoSaude, ...rest } = editForm;
       const updatedData = {
         ...rest,
+        // Mantém modalidadeNome (campo denormalizado usado em relatórios/exports) em sincronia
+        // com o modalidadeId escolhido aqui - sem isso, quem lê só o nome (não resolve pelo id)
+        // continuava mostrando a modalidade antiga mesmo depois da troca.
+        modalidadeNome: modalidades.find(m => m.id === editForm.modalidadeId)?.nome || '',
+        idadeNoCadastro: editedAge,
         responsavelNome: editedAge !== null && editedAge <= 12 ? editForm.responsavelNome.trim() : '',
         responsavelCpf: editedAge !== null && editedAge <= 12 ? editForm.responsavelCpf : '',
         saude: {
@@ -558,9 +670,24 @@ export default function AdminAtletaDetalhes() {
         updatedAt: new Date()
       };
       await updateDoc(doc(db, 'nightrun_registrations', id!), updatedData);
-      showAlert('Sucesso!', 'success'); setShowEditModal(false); loadAtleta();
+      await loadAtleta();
+      showAlert('Sucesso!', 'success'); setShowEditModal(false);
     } catch { showAlert('Erro', 'error'); } finally { setSaving(false); }
   };
+  // Quando a data de nascimento muda no formulário de edição, recalcula a idade e ajusta a
+  // categoria (adulto/infantil) automaticamente - sem isso, o admin pode esquecer de trocar o
+  // seletor de categoria manualmente e o card/threshold de responsável fica desalinhado com a
+  // idade real.
+  const handleEditFormChange = (updated: any) => {
+    if (updated.dataNascimento !== editForm.dataNascimento) {
+      const idade = calculateAgeFromDate(parseBirthDate(updated.dataNascimento));
+      if (idade !== null) {
+        updated = { ...updated, categoria: idade <= 12 ? 'infantil' : 'adulto' };
+      }
+    }
+    setEditForm(updated);
+  };
+
   const addObservation = async () => {
     const text = prompt('Adicionar observação:');
     if (!text) return;
@@ -642,8 +769,8 @@ export default function AdminAtletaDetalhes() {
                 <div style={{ background: '#071A45', color: '#6BFF2A', padding: '6px 16px', borderRadius: 8, fontSize: '0.75rem', fontWeight: 800 }}>{modalidadeLabel.toUpperCase()}</div>
               )}
               <div style={{
-                background: isPago ? '#dcfce7' : '#fef9c3',
-                color: isPago ? '#166534' : '#854d0e',
+                background: isGratuito ? '#ede9fe' : isPago ? '#dcfce7' : '#fef9c3',
+                color: isGratuito ? '#6d28d9' : isPago ? '#166534' : '#854d0e',
                 padding: '6px 16px', borderRadius: 8, fontSize: '0.75rem', fontWeight: 800
               }}>
                 {pagamentoLabel.toUpperCase()}
@@ -674,6 +801,14 @@ export default function AdminAtletaDetalhes() {
                 {confirmingPayment ? 'CONFIRMANDO...' : 'CONFIRMAR PAGAMENTO'}
               </button>
             )}
+            {isPago && !reg.titularidadeTransferida && (
+              <button
+                onClick={() => setShowTransferModal(true)}
+                style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '10px 20px', borderRadius: 10, fontWeight: 900, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center' }}
+              >
+                <Repeat size={16} /> TRANSFERIR TITULARIDADE
+              </button>
+            )}
             <button onClick={cancelRegistration} style={{ background: '#f1f5f9', color: '#ef4444', border: '1px solid #fee2e2', padding: '10px 20px', borderRadius: 10, fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer' }}>
               CANCELAR INSCRIÇÃO
             </button>
@@ -686,6 +821,56 @@ export default function AdminAtletaDetalhes() {
             Servidor público deve apresentar o contracheque na retirada do kit. É obrigatório.
           </div>
         )}
+
+        {reg.titularidadeTransferida && (() => {
+          const nomeDestino = linkedTitularidade?.nome || reg.titularidadeTransferidaParaNome || 'outro atleta';
+          const telefoneDestino = linkedTitularidade?.telefone || reg.titularidadeTransferidaParaTelefone || '';
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 14, padding: '14px 18px', marginBottom: 24, fontWeight: 800, fontSize: '0.85rem' }}>
+              <span><Repeat size={16} style={{ verticalAlign: -3, marginRight: 8 }} />Titularidade transferida para <strong>{nomeDestino}</strong>.</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => window.open(buildWhatsAppUrl(telefoneDestino, buildNewOwnerTransferMessage(nomeDestino, reg.nome || '')), '_blank', 'noopener,noreferrer')}
+                  disabled={!telefoneDestino}
+                  title={!telefoneDestino ? 'Telefone do novo titular não encontrado' : undefined}
+                  style={{ background: '#25D366', border: 'none', color: '#071A45', borderRadius: 8, padding: '6px 12px', fontWeight: 900, fontSize: '.72rem', cursor: telefoneDestino ? 'pointer' : 'not-allowed', opacity: telefoneDestino ? 1 : .6, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <MessageCircle size={13} /> AVISAR NOVO TITULAR
+                </button>
+                {reg.titularidadeTransferidaParaId && (
+                  <button onClick={() => navigate(`/admin/inscritos/${reg.titularidadeTransferidaParaId}`)} style={{ background: '#fff', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 8, padding: '6px 12px', fontWeight: 900, fontSize: '.72rem', cursor: 'pointer' }}>
+                    VER NOVO TITULAR
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {reg.titularidadeRecebida && (() => {
+          const nomeOrigem = linkedTitularidade?.nome || reg.titularidadeRecebidaDeNome || 'outro atleta';
+          const telefoneOrigem = linkedTitularidade?.telefone || reg.titularidadeRecebidaDeTelefone || '';
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af', borderRadius: 14, padding: '14px 18px', marginBottom: 24, fontWeight: 800, fontSize: '0.85rem' }}>
+              <span><Repeat size={16} style={{ verticalAlign: -3, marginRight: 8 }} />Confirmada por transferência de titularidade de <strong>{nomeOrigem}</strong>.</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => window.open(buildWhatsAppUrl(telefoneOrigem, buildOldOwnerTransferMessage(nomeOrigem, reg.nome || '')), '_blank', 'noopener,noreferrer')}
+                  disabled={!telefoneOrigem}
+                  title={!telefoneOrigem ? 'Telefone do antigo titular não encontrado' : undefined}
+                  style={{ background: '#25D366', border: 'none', color: '#071A45', borderRadius: 8, padding: '6px 12px', fontWeight: 900, fontSize: '.72rem', cursor: telefoneOrigem ? 'pointer' : 'not-allowed', opacity: telefoneOrigem ? 1 : .6, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <MessageCircle size={13} /> AVISAR ANTIGO TITULAR
+                </button>
+                {reg.titularidadeRecebidaDeId && (
+                  <button onClick={() => navigate(`/admin/inscritos/${reg.titularidadeRecebidaDeId}`)} style={{ background: '#fff', border: '1px solid #bfdbfe', color: '#1e40af', borderRadius: 8, padding: '6px 12px', fontWeight: 900, fontSize: '.72rem', cursor: 'pointer' }}>
+                    VER ANTIGO TITULAR
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 450px), 1fr))', gap: 24 }}>
           {/* Lado Esquerdo: Identificação & Kit */}
@@ -721,6 +906,7 @@ export default function AdminAtletaDetalhes() {
                 ['Tamanho Camiseta', camisetaMedida ? `${formattedTamanho} - ${camisetaMedida}` : formattedTamanho],
                 ['Valor do lote', formatCurrency(originalAmount)],
                 ['Desconto', discountAmount > 0 ? `${discountLabel} (-${formatCurrency(discountAmount)})` : 'Sem desconto'],
+                ['Cupom usado', couponLabel],
                 ['Valor final', formatCurrency(finalAmount)],
                 ['Status do pagamento', pagamentoLabel],
                 ['Banco do pagamento', paymentProviderInfo ? `${paymentProviderInfo.name} ${paymentMethodLabel}` : '---'],
@@ -904,7 +1090,26 @@ export default function AdminAtletaDetalhes() {
         document.body
       )}
 
-      <AtletaEditModal show={showEditModal} onClose={() => setShowEditModal(false)} form={editForm} setForm={setEditForm} onSave={saveEdit} saving={saving} CATEGORIAS={CATEGORIAS} KITS={KITS} camisetas={camisetas} modalidades={modalidades} camisetaCounts={camisetaCounts} />
+      <AtletaEditModal show={showEditModal} onClose={() => setShowEditModal(false)} form={editForm} setForm={handleEditFormChange} onSave={saveEdit} saving={saving} CATEGORIAS={CATEGORIAS} KITS={kitsCadastrados.length > 0 ? kitsCadastrados : KITS} camisetas={camisetas} modalidades={modalidades} camisetaCounts={camisetaCounts} />
+
+      {showTransferModal && (
+        <TransferTitularidadeModal
+          origin={reg}
+          onClose={() => setShowTransferModal(false)}
+          onTransferred={loadAtleta}
+        />
+      )}
+
+      {sendChoiceCardUrl && (
+        <SendCardChoiceModal
+          phone={reg.telefone}
+          cardUrl={sendChoiceCardUrl}
+          text={buildEuVouWhatsAppText()}
+          onClose={() => setSendChoiceCardUrl(null)}
+          onManualSend={() => openWhatsAppWithEuVouCard(sendChoiceCardUrl)}
+          onAutoSent={() => logEuVouCardSend(sendChoiceCardUrl, 'whatsapp_auto')}
+        />
+      )}
     </div>
   );
 }

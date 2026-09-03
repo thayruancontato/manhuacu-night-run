@@ -18,9 +18,9 @@ export default function AdminMensagensPersonalizadas() {
       let p = phone.replace(/\D/g, '');
       if (!p.startsWith('55')) p = '55' + p;
       const workerUrl = import.meta.env.VITE_WORKER_URL;
-      await fetch(`${workerUrl}/queue/enqueue`, {
+      await fetch(`${workerUrl}/hub/messages`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [{ phone: p, text: msg, imageUrl: imageUrl || undefined }] })
+        body: JSON.stringify({ to: p, text: msg, imageUrl: imageUrl || undefined })
       });
       showAlert('Mensagem enfileirada!', 'success');
       setMsg('');

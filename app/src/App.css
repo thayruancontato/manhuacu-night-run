@@ -5492,3 +5492,199 @@ input[type="radio"], input[type="checkbox"] { display:none; }
 
 
 
+
+/* ===== Sold Out Screen (1000+ confirmados) ===== */
+.sold-out-photo-bg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: space-between;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.sold-out-photo-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 84px;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+.sold-out-photo-col-up { animation: soldOutScrollUp 40s linear infinite; margin-top: -50%; }
+.sold-out-photo-col-down { animation: soldOutScrollDown 40s linear infinite; }
+
+@keyframes soldOutScrollUp {
+  from { transform: translateY(0); }
+  to { transform: translateY(-50%); }
+}
+
+@keyframes soldOutScrollDown {
+  from { transform: translateY(-50%); }
+  to { transform: translateY(0); }
+}
+
+.sold-out-photo-card {
+  width: 84px;
+  height: 110px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 2px solid rgba(107,255,42,0.25);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+  transform: rotate(-4deg);
+  flex-shrink: 0;
+}
+
+.sold-out-photo-col-down .sold-out-photo-card { transform: rotate(4deg); }
+
+.sold-out-photo-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.sold-out-screen .landing-content { position: relative; z-index: 1; }
+
+.sold-out-screen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(15,21,53,0.97) 0%, rgba(15,21,53,0.55) 22%, rgba(15,21,53,0.55) 78%, rgba(15,21,53,0.97) 100%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.sold-out-card {
+  align-items: center;
+  text-align: center;
+  padding: 26px 18px 14px !important;
+}
+
+.sold-out-check {
+  color: var(--accent);
+  filter: drop-shadow(0 0 10px rgba(107,255,42,0.5));
+  margin-bottom: 10px;
+}
+
+.sold-out-count {
+  color: #fff;
+  font-size: 1.6rem;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+
+.sold-out-title {
+  color: var(--accent);
+  font-size: 1.15rem;
+  font-weight: 900;
+  margin-top: 6px;
+  letter-spacing: 0.5px;
+}
+
+.sold-out-subtitle {
+  color: rgba(255,255,255,0.7);
+  font-size: 0.85rem;
+  margin: 8px 0 14px;
+}
+
+/* ===== Atletas Confirmados (lista pública) ===== */
+.atletas-confirmados-page {
+  min-height: 100svh;
+  background: #0f1535;
+  padding: max(16px, env(safe-area-inset-top)) 16px 40px;
+}
+
+.atletas-confirmados-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+  position: sticky;
+  top: 0;
+  padding: 6px 0 14px;
+  background: #0f1535;
+  z-index: 2;
+}
+
+.atletas-confirmados-back {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #fff;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.atletas-confirmados-header h1 {
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 900;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.atletas-confirmados-header span {
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.atletas-confirmados-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.atletas-confirmados-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 10px 14px;
+}
+
+.atletas-confirmados-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(107,255,42,0.12);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.atletas-confirmados-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.atletas-confirmados-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  text-transform: uppercase;
+}
+
+.atletas-confirmados-info strong {
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atletas-confirmados-info span {
+  color: rgba(255,255,255,0.55);
+  font-size: 0.72rem;
+  font-weight: 600;
+}

@@ -1,17 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, doc, getCountFromServer, getDoc } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, query, where } from 'firebase/firestore';
 import { LandingPage } from '../components/public-form/LandingPage';
+import { SoldOutScreen } from '../components/public-form/SoldOutScreen';
 import { KitDrawer } from '../components/public-form/KitDrawer';
 import ClosedRegistrations from './ClosedRegistrations';
 import '../App.css';
+
+const CONFIRMED_SOLD_OUT_THRESHOLD = 1000;
 
 export default function Home() {
   const [vagas, setVagas] = useState<number | null>(null);
   const [displayVagas, setDisplayVagas] = useState(1000);
   const [eventDate, setEventDate] = useState('');
   const [showUrgencyBanner, setShowUrgencyBanner] = useState(false);
+  const [confirmedCount, setConfirmedCount] = useState<number | null>(null);
   const navigate = useNavigate();
 
   const [registrationsClosed, setRegistrationsClosed] = useState(false);
@@ -68,6 +72,16 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       try {
+        const q = query(collection(db, 'nightrun_registrations'), where('paymentStatus', '==', 'pago'));
+        const snap = await getCountFromServer(q);
+        setConfirmedCount(snap.data().count);
+      } catch (e) { console.error('Erro ao buscar inscritos confirmados', e); }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
         const snap = await getDoc(doc(db, 'nightrun_settings', 'evento'));
         if (snap.exists()) setEventDate(snap.data().eventDate || '');
       } catch (e) {
@@ -103,6 +117,22 @@ export default function Home() {
   if (loadingSetting) return null;
   if (registrationsClosed && !bypassClosedScreen) {
     return <ClosedRegistrations />;
+  }
+
+  const soldOut = confirmedCount !== null && confirmedCount >= CONFIRMED_SOLD_OUT_THRESHOLD;
+
+  if (soldOut) {
+    return (
+      <div className="public-app-root public-home-root">
+        <main className="public-main-content">
+          <SoldOutScreen
+            confirmedCount={confirmedCount as number}
+            eventDate={eventDate}
+            onViewList={() => navigate('/atletas')}
+          />
+        </main>
+      </div>
+    );
   }
 
   return (

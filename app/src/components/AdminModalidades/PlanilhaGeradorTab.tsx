@@ -42,11 +42,7 @@ const COLUMN_DEFS: ColumnDef[] = [
   { id: 'linkEuVou', label: 'Card #EUVOU (link)', group: 'Mídia' },
 ];
 
-const DEFAULT_ON = new Set([
-  'nome', 'dataNascimento', 'sexo', 'email', 'telefone',
-  'modalidade', 'categoria', 'equipe', 'kit', 'camiseta',
-  'statusPagamento', 'dataInscricao',
-]);
+const DEFAULT_ON = new Set(COLUMN_DEFS.map(c => c.id));
 
 const STATUS_OPTIONS = [
   { id: 'pago', label: 'Confirmado (pago)', color: '#16a34a' },

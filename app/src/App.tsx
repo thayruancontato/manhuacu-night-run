@@ -4,6 +4,7 @@ import { LoadingProvider } from './components/LoadingService';
 import { AuthProvider } from './context/AuthContext';
 import ClosedRegistrations from './pages/ClosedRegistrations';
 import Home from './pages/Home';
+import AtletasConfirmados from './pages/AtletasConfirmados';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminInscritos from './pages/AdminInscritos';
 import AdminFinanceiro from './pages/AdminFinanceiro';
@@ -64,6 +65,7 @@ function App() {
             <Routes>
               {/* Public */}
               <Route path="/" element={<Home />} />
+              <Route path="/atletas" element={<AtletasConfirmados />} />
               <Route path="/regulamento" element={<Regulamento />} />
               <Route path="/inscricao" element={<ClosedRegistrations />} />
               <Route path="/inscricao/pagamento/:registrationId" element={<PaymentPage />} />

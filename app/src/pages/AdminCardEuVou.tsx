@@ -96,9 +96,17 @@ export default function AdminCardEuVou() {
     });
   }, [registrations, search, modalidades]);
 
-  // Mesma lógica de vínculo do dashboard do atleta (mesmo e-mail, ou telefone que é contato de
-  // emergência de um lado ou do outro) — agrupa irmãos/familiares num único card principal.
-  const groups = useMemo(() => groupLinkedRegistrations(filtered), [filtered]);
+  // Cada inscrição vira seu próprio card na lista - pra cada uma, calculamos quem mais está
+  // vinculado a ela (mesma lógica do dashboard do atleta: mesmo e-mail, ou telefone que é
+  // contato de emergência de um lado ou do outro) só pra mostrar a citação de apoio no card.
+  const linkedByRegId = useMemo(() => {
+    const map = new Map<string, any[]>();
+    groupLinkedRegistrations(filtered).forEach(({ main, linked }) => {
+      const group = [main, ...linked];
+      group.forEach(member => map.set(member.id, group.filter(other => other.id !== member.id)));
+    });
+    return map;
+  }, [filtered]);
 
   const logCardSend = async (registration: any, method: 'whatsapp_manual' | 'whatsapp_auto') => {
     const clickedAt = new Date();
@@ -183,7 +191,8 @@ export default function AdminCardEuVou() {
         </div>
       ) : (
         <div className="admin-card-euvou-grid">
-          {groups.map(({ main, linked }) => {
+          {filtered.map(main => {
+            const linked = linkedByRegId.get(main.id) || [];
             const modalidade = getModalidadeNome(main);
             const sending = sendingId === main.id;
             const sentCount = Number(main.euVouCardSendClickCount || main.euVouCardSendHistory?.length || 0);

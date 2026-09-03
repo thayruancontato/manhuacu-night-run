@@ -292,10 +292,18 @@ export default function AdminInscritos() {
     return filtered.slice(start, start + itemsPerPage);
   }, [filtered, currentPage, itemsPerPage, clientMode]);
 
-  // Agrupa vinculados (mesma lógica do dashboard do atleta) só dentro da página atual —
-  // suficiente pra maioria dos casos, já que inscrições de uma mesma família costumam ser
-  // feitas em sequência e caem na mesma página (ordenadas por data de criação).
-  const groupedPage = useMemo(() => groupLinkedRegistrations(paginatedData), [paginatedData]);
+  // Cada inscrição vira seu próprio card na lista (ninguém fica escondido dentro da citação
+  // "Vinculados" de outro atleta) - mas ainda calculamos, pra cada uma, quem mais está
+  // vinculado a ela (mesma lógica do dashboard do atleta) só pra mostrar a citação de apoio
+  // dentro do card. Só enxerga vínculos dentro da página atual carregada.
+  const linkedByRegId = useMemo(() => {
+    const map = new Map<string, any[]>();
+    groupLinkedRegistrations(paginatedData).forEach(({ main, linked }) => {
+      const group = [main, ...linked];
+      group.forEach(member => map.set(member.id, group.filter(other => other.id !== member.id)));
+    });
+    return map;
+  }, [paginatedData]);
 
   useEffect(() => {
     if (loading || didRestoreScrollRef.current) return;
@@ -553,7 +561,8 @@ export default function AdminInscritos() {
           <div className="admin-inscritos-empty">Nenhum atleta encontrado nos filtros atuais.</div>
         ) : (
           <div className="admin-card-euvou-grid">
-            {groupedPage.map(({ main: r, linked }) => {
+            {paginatedData.map(r => {
+              const linked = linkedByRegId.get(r.id) || [];
               const isFree = Boolean(r.gratuito);
               const isPaid = r.paymentStatus === 'pago';
               const isFantasma = Boolean(r.pendenciaFantasma);

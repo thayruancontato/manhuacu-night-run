@@ -890,8 +890,18 @@ export default {
         return json({ success: true, numbers });
       }
 
+      if (cleanPath === "/thousand/banner-preview" && request.method === "GET") {
+        const roster = await fetchConfirmedRosterForBroadcast(env);
+        const png = await generateThousandCelebrationBannerPng(env, roster);
+        return new Response(png, { headers: { "Content-Type": "image/png", ...corsHeaders } });
+      }
+
       if (cleanPath === "/thousand/test-broadcast" && request.method === "POST") {
         const dryRun = url.searchParams.get("dry") === "1";
+        // Sincrono (nao waitUntil): a geracao + envio ficam dentro do limite de CPU do
+        // Worker (sem fotos no PDF), e o tempo de resposta em si nao tem limite rigido
+        // enquanto for I/O (esperando rede) - so o waitUntil() tem uma janela curta demais
+        // pra esse fluxo completo, entao esperamos terminar antes de responder.
         const result = await triggerThousandBroadcast(env, ctx, { test: true, dryRun });
         return json(result);
       }
@@ -923,7 +933,11 @@ export default {
     // Rede de seguranca do limite de 1000 confirmados: todo minuto, recalibra o contador
     // contra a contagem real do Firestore (corrige qualquer caminho que confirme pagamento
     // sem passar por confirmRegistrationDocument) e dispara o aviso se ja tiver cruzado 1000.
-    ctx.waitUntil(recalibrateConfirmedCounter(env, ctx).catch(error => console.error("[Thousand] recalibration scheduled failed", error)));
+    // AWAIT direto (nao ctx.waitUntil) de proposito: o disparo de verdade (gerar banner+PDF
+    // e mandar pro WhatsApp) demora mais do que a janela extra que o waitUntil() ganha depois
+    // do handler "terminar" - so fica confiavel fazendo parte da execucao principal do cron,
+    // que nao tem essa limitacao (nao esta amarrada a uma resposta HTTP esperando ninguem).
+    await recalibrateConfirmedCounter(env, ctx).catch(error => console.error("[Thousand] recalibration scheduled failed", error));
     await processQueue(env);
   }
 };
@@ -3072,7 +3086,10 @@ async function sendMessage(msg, env) {
       }
     };
   }
-  const throttle = await throttleWhatsAppInstance(env, instanceName);
+  // skipThrottle: usado quando duas mensagens do MESMO disparo (ex: banner + PDF do aviso
+  // de 1000 confirmados) precisam sair em sequencia pro mesmo numero sem o espacamento
+  // padrao entre envios - esse throttle existe pra disparos em massa pra numeros diferentes.
+  const throttle = msg.skipThrottle ? { waitedMs: 0 } : await throttleWhatsAppInstance(env, instanceName);
   if (throttle.waitedMs > 0) {
     console.log("[WhatsApp Send] Instance throttle", { instanceName, waitedMs: throttle.waitedMs });
   }
@@ -3302,42 +3319,50 @@ function bytesToBase64Chunked(bytes) {
   return btoa(bin);
 }
 
-// Baixa a foto original e gera uma MINIATURA pequena (renderizada via resvg) - fotos
-// enviadas por atleta podem ter varios MB (foto de celular), e embutir o arquivo original
-// em cada linha da tabela do PDF (dezenas de fotos por pagina) estoura a memoria do worker.
-// A miniatura fica com poucos KB, entao dezenas delas por pagina nao pesam quase nada.
-const ROSTER_PHOTO_THUMB_PX = 64;
-async function fetchRosterPhotoThumbnail(url) {
+// Baixa a foto original (sem redimensionar via resvg - instanciar o resvg-wasm ~1000x so
+// pra reduzir o tamanho de cada foto e CPU-bound demais e estoura o orcamento de execucao do
+// Worker, mesmo em segundo plano via waitUntil). Embutimos o arquivo original direto na
+// pagina, com um limite de tamanho por foto pra manter cada pagina do PDF leve o bastante -
+// quem faz o "resize" visual e o proprio resvg na hora de rasterizar a pagina inteira, usando
+// width/height pequenos no <image>.
+const MAX_SOURCE_PHOTO_BYTES = 140_000;
+
+// As fotos ficam no bucket R2 (env.MEDIA_BUCKET), servidas publicamente via /media/<key>.
+// Um Worker NAO consegue fazer fetch() confiavel na sua PROPRIA URL publica (mesma limitacao
+// documentada no proxy do Hub acima: a Cloudflare as vezes devolve 404/1042 pra requisicoes
+// que voltam pro mesmo Worker) - por isso le direto do bucket pela binding em vez de HTTP.
+function extractMediaKeyFromUrl(url) {
+  const marker = "/media/";
+  const idx = url.indexOf(marker);
+  if (idx === -1) return null;
+  return decodeURIComponent(url.slice(idx + marker.length).split("?")[0]);
+}
+
+async function fetchRosterPhotoRaw(env, url) {
   if (!url) return null;
   try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      await res.body?.cancel().catch(() => {});
-      return null;
+    const key = extractMediaKeyFromUrl(url);
+    let buf, contentType;
+    if (key) {
+      const obj = await env.MEDIA_BUCKET.get(key);
+      if (!obj) return null;
+      buf = await obj.arrayBuffer();
+      contentType = obj.httpMetadata?.contentType || "image/jpeg";
+    } else {
+      // Foto hospedada fora do nosso bucket (nao deveria acontecer com os dados atuais,
+      // mas mantem um fallback via fetch normal pra qualquer URL externa).
+      const res = await fetch(url);
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => {});
+        return null;
+      }
+      contentType = res.headers.get("content-type") || "image/jpeg";
+      buf = await res.arrayBuffer();
     }
-    const contentType = res.headers.get("content-type") || "image/jpeg";
-    const buf = await res.arrayBuffer();
-    // Fotos de celular podem vir com varios MB - o resvg-wasm nao lida bem com strings/base64
-    // gigantes passadas pro WASM (mesmo RangeError do header grande). Acima desse tamanho,
-    // pula a miniatura (cai no circulo cinza) em vez de arriscar quebrar a pagina inteira.
-    const MAX_SOURCE_PHOTO_BYTES = 350_000;
     if (buf.byteLength > MAX_SOURCE_PHOTO_BYTES) return null;
-    const originalBase64 = bytesToBase64Chunked(new Uint8Array(buf));
-    const svg = `<svg width="${ROSTER_PHOTO_THUMB_PX}" height="${ROSTER_PHOTO_THUMB_PX}" xmlns="http://www.w3.org/2000/svg">
-      <image x="0" y="0" width="${ROSTER_PHOTO_THUMB_PX}" height="${ROSTER_PHOTO_THUMB_PX}" href="data:${contentType};base64,${originalBase64}" preserveAspectRatio="xMidYMid slice"/>
-    </svg>`;
-    // .free() explicito nos dois e essencial aqui: isso roda uma vez por foto (ate ~1000x
-    // numa lista cheia) e o resvg-wasm nao libera a memoria WASM sozinho so por o objeto JS
-    // sair de escopo - sem isso, a memoria do WASM vaza e uma chamada mais adiante (mesmo
-    // bem menor) quebra com "Invalid array buffer length" por falta de memoria.
-    const resvg = new Resvg(svg, { fitTo: { mode: "width", value: ROSTER_PHOTO_THUMB_PX } });
-    const rendered = resvg.render();
-    const thumbPng = rendered.asPng();
-    rendered.free();
-    resvg.free();
-    return bytesToBase64Chunked(thumbPng);
+    return { base64: bytesToBase64Chunked(new Uint8Array(buf)), contentType };
   } catch (error) {
-    console.warn("[Thousand] Falha ao gerar miniatura da foto", { url, error: error.message });
+    console.warn("[Thousand] Falha ao baixar foto", { url, error: error.message });
     return null;
   }
 }
@@ -3374,17 +3399,19 @@ async function generateConfirmedRosterPdf(env, roster, { test = false } = {}) {
   const headerRes = await fetch("https://night-run-uba.web.app/header-pdf.png");
   const headerBase64 = bytesToBase64Chunked(new Uint8Array(await headerRes.arrayBuffer()));
 
-  // Concorrencia baixa de proposito: o limite pratico de conexoes simultaneas de fetch()
-  // num Worker e ~6 - acima disso, respostas ficam paradas e o runtime cancela a mais antiga
-  // pra evitar deadlock, o que corrompe o corpo e quebra o arrayBuffer() de quem estava lendo.
-  const photosBase64 = await mapWithConcurrency(roster, 5, item => fetchRosterPhotoThumbnail(item.fotoUrl));
+  // Sem fotos aqui de proposito: decodificar ~1000 JPEGs (mesmo sem redimensionar antes)
+  // estoura o limite de CPU por execucao do Worker (erro 1102), mesmo rodando em segundo
+  // plano - o gargalo e o decode das imagens dentro do resvg na hora de renderizar cada
+  // pagina, nao tem como evitar sem tirar as fotos. O banner (so ~50 fotos) continua com
+  // mosaico normal. Pra lista completa COM foto por atleta, usar a Planilha Gerador do
+  // admin (roda no navegador do usuario, sem limite de CPU de servidor).
   const headerH = W / (2172 / 724);
-  const rowH = 36;
+  const rowH = 30;
   const usableW = W - marginX * 2;
-  const colNome = marginX + 56;
-  const colModalidade = colNome + 300;
-  const colKit = colModalidade + 170;
-  const colTelefone = colKit + 150;
+  const colNome = marginX;
+  const colModalidade = colNome + 330;
+  const colKit = colModalidade + 190;
+  const colTelefone = colKit + 160;
   const tableHeaderY = headerH + 45;
   const tableHeaderH = 26;
   const rowsStartY = tableHeaderY + tableHeaderH + 8;
@@ -3405,16 +3432,8 @@ async function generateConfirmedRosterPdf(env, roster, { test = false } = {}) {
       const idx = start + i;
       const rowY = rowsStartY + i * rowH;
       const stripe = idx % 2 === 1 ? `<rect x="${marginX}" y="${rowY}" width="${usableW}" height="${rowH}" fill="${STRIPE}"/>` : "";
-      const photo64 = photosBase64[idx];
       const cy = rowY + rowH / 2;
-      let photoEl;
-      if (photo64) {
-        defsSvg += `<clipPath id="clip${idx}"><circle cx="${marginX + 18}" cy="${cy}" r="13"/></clipPath>`;
-        photoEl = `<image x="${marginX + 5}" y="${cy - 13}" width="26" height="26" href="data:image/png;base64,${photo64}" clip-path="url(#clip${idx})" preserveAspectRatio="xMidYMid slice"/>`;
-      } else {
-        photoEl = `<circle cx="${marginX + 18}" cy="${cy}" r="13" fill="#e2e8f0"/>`;
-      }
-      rowsSvg += `${stripe}${photoEl}
+      rowsSvg += `${stripe}
         <text x="${colNome}" y="${cy + 5}" font-size="13" font-family="Montserrat" font-weight="800" fill="${NAVY}">${xmlEscape(item.nome.toUpperCase())}</text>
         <text x="${colModalidade}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.modalidade)}</text>
         <text x="${colKit}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.kit)}</text>
@@ -3454,41 +3473,61 @@ async function generateConfirmedRosterPdf(env, roster, { test = false } = {}) {
   return pdfDoc.save();
 }
 
-// Banner horizontal festivo (logo + "PARABÉNS! 1000 CONFIRMADOS") pro header da mensagem
-// de WhatsApp do aviso automatico - mesma tecnica de renderizacao do banner operacional.
-async function generateThousandCelebrationBannerPng(env) {
+// Banner horizontal festivo (mosaico com fotos reais dos atletas confirmados + "PARABENS!
+// 1000 CONFIRMADOS") pro header da mensagem de WhatsApp do aviso. Mesma tecnica de
+// renderizacao do banner operacional, com uma amostra espalhada do roster real ao fundo -
+// bem mais empolgante que so gradiente e confete generico.
+async function generateThousandCelebrationBannerPng(env, roster = []) {
   await ensureResvgWasm();
   const logoBase64 = await getOperationalLogoBase64(env);
-  const W = 1200, H = 630;
-  const dots = Array.from({ length: 26 }, (_, i) => {
-    const x = Math.round((i * 137) % W);
-    const y = Math.round((i * 71) % H);
-    const r = 3 + (i % 4);
-    const colors = ["#6BFF2A", "#ffffff", "#D4E926"];
-    return `<circle cx="${x}" cy="${y}" r="${r}" fill="${colors[i % colors.length]}" opacity="${0.15 + (i % 3) * 0.08}"/>`;
+  const W = 1200, H = 675;
+
+  // Amostra ~50 fotos espalhadas pela lista inteira (nao so as primeiras em ordem alfabetica),
+  // pra formar um mosaico representativo. Mesma concorrencia baixa + limite de tamanho + free()
+  // ja validados na geracao do PDF, senao arrisca o mesmo vazamento de memoria do WASM.
+  const COLS = 10, ROWS = 5;
+  const sampleSize = COLS * ROWS;
+  const step = Math.max(1, Math.floor(roster.length / sampleSize));
+  const sample = roster.filter((_, i) => i % step === 0).slice(0, sampleSize);
+  const thumbs = await mapWithConcurrency(sample, 20, item => fetchRosterPhotoRaw(env, item.fotoUrl));
+
+  const tileW = W / COLS, tileH = H / ROWS;
+  const mosaic = thumbs.map((photo, i) => {
+    if (!photo) return "";
+    const col = i % COLS, row = Math.floor(i / COLS);
+    return `<image x="${col * tileW}" y="${row * tileH}" width="${tileW + 1}" height="${tileH + 1}" href="data:${photo.contentType};base64,${photo.base64}" preserveAspectRatio="xMidYMid slice"/>`;
+  }).join("");
+
+  const GOLD = "#FFD700";
+  const stars = Array.from({ length: 18 }, (_, i) => {
+    const x = Math.round((i * 173 + 40) % W);
+    const y = Math.round((i * 97 + 30) % H);
+    const s = 10 + (i % 3) * 6;
+    const rot = (i * 37) % 360;
+    const colors = [GOLD, "#6BFF2A", "#ffffff"];
+    return `<g transform="translate(${x} ${y}) rotate(${rot})" opacity="${0.55 + (i % 3) * 0.15}">
+      <path d="M0 -${s} L${s * 0.28} -${s * 0.28} L${s} 0 L${s * 0.28} ${s * 0.28} L0 ${s} L-${s * 0.28} ${s * 0.28} L-${s} 0 L-${s * 0.28} -${s * 0.28} Z" fill="${colors[i % colors.length]}"/>
+    </g>`;
   }).join("");
 
   const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#071A45"/>
-        <stop offset="100%" stop-color="#0f2a6b"/>
-      </linearGradient>
-      <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#6BFF2A" stop-opacity="0.35"/>
-        <stop offset="100%" stop-color="#6BFF2A" stop-opacity="0"/>
-      </linearGradient>
+      <radialGradient id="dark" cx="50%" cy="50%" r="75%">
+        <stop offset="0%" stop-color="#071A45" stop-opacity="0.94"/>
+        <stop offset="55%" stop-color="#071A45" stop-opacity="0.88"/>
+        <stop offset="100%" stop-color="#071A45" stop-opacity="0.55"/>
+      </radialGradient>
     </defs>
-    <rect width="${W}" height="${H}" fill="url(#bg)"/>
-    <ellipse cx="${W / 2}" cy="0" rx="${W * 0.6}" ry="260" fill="url(#glow)"/>
-    ${dots}
-    <path d="M -40 -40 Q 160 160 -10 420" stroke="#6BFF2A" stroke-width="3" fill="none" opacity="0.4"/>
-    <path d="M ${W + 40} ${H + 40} Q ${W - 160} ${H - 160} ${W + 10} ${H - 420}" stroke="#6BFF2A" stroke-width="3" fill="none" opacity="0.4"/>
-    <image x="${W / 2 - 150}" y="46" width="300" height="177" href="data:image/png;base64,${logoBase64}" preserveAspectRatio="xMidYMid meet"/>
-    <text x="${W / 2}" y="330" font-size="30" fill="#6BFF2A" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="3">SÃO 1000 CONFIRMADOS!</text>
-    <text x="${W / 2}" y="415" font-size="68" fill="#ffffff" text-anchor="middle" font-family="Montserrat" font-weight="800">PARABÉNS,</text>
-    <text x="${W / 2}" y="490" font-size="68" fill="#ffffff" text-anchor="middle" font-family="Montserrat" font-weight="800">MCU NIGHT RUN!</text>
-    <text x="${W / 2}" y="560" font-size="22" fill="#94a3b8" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="1">A MAIOR CORRIDA NOTURNA DA REGIÃO</text>
+    <rect width="${W}" height="${H}" fill="#071A45"/>
+    ${mosaic}
+    <rect width="${W}" height="${H}" fill="url(#dark)"/>
+    ${stars}
+    <image x="${W / 2 - 130}" y="34" width="260" height="153" href="data:image/png;base64,${logoBase64}" preserveAspectRatio="xMidYMid meet"/>
+    <text x="${W / 2}" y="270" font-size="26" fill="${GOLD}" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="4">MISSÃO CUMPRIDA</text>
+    <text x="${W / 2}" y="360" font-size="86" fill="#ffffff" text-anchor="middle" font-family="Montserrat" font-weight="800">PARABÉNS!</text>
+    <text x="${W / 2}" y="450" font-size="58" fill="#6BFF2A" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="1">1000 CONFIRMADOS</text>
+    <text x="${W / 2}" y="520" font-size="24" fill="#ffffff" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="1" opacity="0.9">A MAIOR CORRIDA NOTURNA DA REGIÃO ESTÁ COMPLETA!</text>
+    <text x="${W / 2}" y="600" font-size="20" fill="${GOLD}" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="3">MCU NIGHT RUN 2026</text>
   </svg>`;
 
   const resvg = new Resvg(svg, {
@@ -3519,8 +3558,10 @@ async function triggerThousandBroadcast(env, ctx, { test = false, count = null, 
   }
 
   const roster = await fetchConfirmedRosterForBroadcast(env);
+  // As fotos vem do R2 (binding), nao de fetch() - sem limite de conexoes simultaneas pra
+  // se preocupar aqui, entao gera banner e PDF em paralelo pra reduzir o tempo total.
   const [bannerPng, pdfBytes] = await Promise.all([
-    generateThousandCelebrationBannerPng(env),
+    generateThousandCelebrationBannerPng(env, roster),
     generateConfirmedRosterPdf(env, roster, { test })
   ]);
 
@@ -3533,19 +3574,30 @@ async function triggerThousandBroadcast(env, ctx, { test = false, count = null, 
   const bannerBase64 = pngBytesToBase64(bannerPng);
   const pdfBase64 = pngBytesToBase64(pdfBytes);
 
-  const caption = test
-    ? `[TESTE] 🎉 São 1000 confirmados na MCU Night Run 2026! (roster atual: ${roster.length} confirmados)`
-    : `🎉 São 1000 confirmados na MCU Night Run 2026! Segue em anexo a lista completa de atletas confirmados.`;
+  const testPrefix = test ? "[TESTE] " : "";
+  const caption = `${testPrefix}🎉🔥 MISSÃO CUMPRIDA! 🔥🎉\n\n` +
+    `Acabamos de bater os *1000 CONFIRMADOS* na MCU Night Run 2026! 🏃‍♂️💨🏃‍♀️\n\n` +
+    `Isso é história sendo feita — a MAIOR corrida noturna da região tá com a lista de heróis completa! 🙌🏆\n\n` +
+    `📎 Já vem chegando a lista oficial com todo mundo que topou esse desafio.\n\n` +
+    `Bora comemorar! 🎊✨`;
 
+  const pdfCaption = `${testPrefix}📋 LISTA OFICIAL DOS 1000 CONFIRMADOS\n\n` +
+    `${roster.length} atletas, foto, modalidade, kit e telefone — em ordem alfabética. 🏅\n\n` +
+    `MCU Night Run 2026 🌙⚡`;
+
+  // Manda o banner e o PDF em sequencia pro mesmo numero, sem esperar o throttle padrao entre
+  // eles (esse delay existe pra disparos em massa pra numeros diferentes, nao faz sentido
+  // dentro do mesmo aviso) - assim os dois chegam praticamente juntos.
   const results = [];
   for (const phone of numbers) {
-    const bannerResult = await sendMessage({ phone, text: caption, imageUrl: `data:image/png;base64,${bannerBase64}` }, env).catch(error => ({ success: false, error: error.message }));
+    const bannerResult = await sendMessage({ phone, text: caption, imageUrl: `data:image/png;base64,${bannerBase64}`, skipThrottle: true }, env).catch(error => ({ success: false, error: error.message }));
     const pdfResult = await sendMessage({
       phone,
-      text: `Lista de confirmados (${roster.length} atletas) — MCU Night Run 2026`,
+      text: pdfCaption,
       documentBase64: pdfBase64,
       documentMimeType: "application/pdf",
-      documentFileName: `${test ? "teste-" : ""}1000-confirmados-mcu-night-run.pdf`
+      documentFileName: `${test ? "teste-" : ""}1000-confirmados-mcu-night-run.pdf`,
+      skipThrottle: true
     }, env).catch(error => ({ success: false, error: error.message }));
     results.push({ phone, bannerResult, pdfResult });
   }

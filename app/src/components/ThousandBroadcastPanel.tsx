@@ -84,7 +84,13 @@ export default function ThousandBroadcastPanel({ workerUrl, showAlert }: Props) 
       const res = await fetch(`${workerUrl}/thousand/test-broadcast`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        showAlert(`Teste enviado para ${status.numbers.length} número(s): banner + PDF com ${data.rosterCount} confirmados atuais.`, 'success');
+        const allOk = (data.results || []).every((r: any) => r.bannerResult?.success && r.pdfResult?.success);
+        showAlert(
+          allOk
+            ? `Banner + PDF (${data.rosterCount} confirmados) enviados com sucesso pra ${status.numbers.length} número(s).`
+            : `Enviado, mas algum número falhou - confira o WhatsApp de cada um.`,
+          allOk ? 'success' : 'warning'
+        );
       } else {
         showAlert(`Falha no teste: ${data.reason || 'erro desconhecido'}`, 'error');
       }
@@ -156,8 +162,17 @@ export default function ThousandBroadcastPanel({ workerUrl, showAlert }: Props) 
         ))}
       </div>
 
+      <h3 style={{ fontSize: '.85rem', textTransform: 'uppercase', color: '#071A45', marginBottom: 10 }}>
+        Pré-visualização do banner
+      </h3>
+      <img
+        src={`${workerUrl}/thousand/banner-preview?v=${Date.now()}`}
+        alt="Pré-visualização do banner de 1000 confirmados"
+        style={{ width: '100%', borderRadius: 16, border: '1px solid #e2e8f0', marginBottom: 20 }}
+      />
+
       <div style={{ padding: 14, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 14, color: '#92400e', fontSize: '.82rem', fontWeight: 700, marginBottom: 16 }}>
-        O teste manda o banner e o PDF de verdade (marcado como [TESTE]) para os números acima, usando os confirmados atuais - sem mexer no contador real nem marcar o aviso como enviado.
+        O teste manda o banner e o PDF de verdade (marcado como [TESTE]) para os números acima, usando os confirmados atuais - sem mexer no contador real nem marcar o aviso como enviado. Pode levar até 1 minuto.
       </div>
 
       <button

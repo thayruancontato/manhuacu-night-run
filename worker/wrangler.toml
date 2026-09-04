@@ -41,3 +41,6 @@ WHATSAPP_QUEUE_TICK_BUDGET_MS = "45000"
 
 [triggers]
 crons = ["* * * * *"]
+
+[limits]
+cpu_ms = 300000

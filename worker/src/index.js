@@ -3409,9 +3409,8 @@ async function generateConfirmedRosterPdf(env, roster, { test = false } = {}) {
   const rowH = 30;
   const usableW = W - marginX * 2;
   const colNome = marginX;
-  const colModalidade = colNome + 330;
-  const colKit = colModalidade + 190;
-  const colTelefone = colKit + 160;
+  const colModalidade = colNome + 380;
+  const colKit = colModalidade + 260;
   const tableHeaderY = headerH + 45;
   const tableHeaderH = 26;
   const rowsStartY = tableHeaderY + tableHeaderH + 8;
@@ -3436,8 +3435,7 @@ async function generateConfirmedRosterPdf(env, roster, { test = false } = {}) {
       rowsSvg += `${stripe}
         <text x="${colNome}" y="${cy + 5}" font-size="13" font-family="Montserrat" font-weight="800" fill="${NAVY}">${xmlEscape(item.nome.toUpperCase())}</text>
         <text x="${colModalidade}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.modalidade)}</text>
-        <text x="${colKit}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.kit)}</text>
-        <text x="${colTelefone}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.telefone)}</text>`;
+        <text x="${colKit}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.kit)}</text>`;
     });
 
     const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
@@ -3449,7 +3447,6 @@ async function generateConfirmedRosterPdf(env, roster, { test = false } = {}) {
       <text x="${colNome}" y="${tableHeaderY + 18}" font-size="11" font-family="Montserrat" font-weight="800" fill="#ffffff">NOME</text>
       <text x="${colModalidade}" y="${tableHeaderY + 18}" font-size="11" font-family="Montserrat" font-weight="800" fill="#ffffff">MODALIDADE</text>
       <text x="${colKit}" y="${tableHeaderY + 18}" font-size="11" font-family="Montserrat" font-weight="800" fill="#ffffff">KIT</text>
-      <text x="${colTelefone}" y="${tableHeaderY + 18}" font-size="11" font-family="Montserrat" font-weight="800" fill="#ffffff">TELEFONE</text>
       ${rowsSvg}
       <text x="${W - marginX}" y="${H - 14}" font-size="10" font-family="Montserrat" fill="#94a3b8" text-anchor="end">Página ${page + 1} de ${pageCount} · ${roster.length} confirmados</text>
     </svg>`;
@@ -3575,25 +3572,21 @@ async function triggerThousandBroadcast(env, ctx, { test = false, count = null, 
   const pdfBase64 = pngBytesToBase64(pdfBytes);
 
   const testPrefix = test ? "[TESTE] " : "";
-  const caption = `${testPrefix}🎉🔥 MISSÃO CUMPRIDA! 🔥🎉\n\n` +
-    `Acabamos de bater os *1000 CONFIRMADOS* na MCU Night Run 2026! 🏃‍♂️💨🏃‍♀️\n\n` +
-    `Isso é história sendo feita — a MAIOR corrida noturna da região tá com a lista de heróis completa! 🙌🏆\n\n` +
-    `📎 Já vem chegando a lista oficial com todo mundo que topou esse desafio.\n\n` +
-    `Bora comemorar! 🎊✨`;
-
-  const pdfCaption = `${testPrefix}📋 LISTA OFICIAL DOS 1000 CONFIRMADOS\n\n` +
-    `${roster.length} atletas, foto, modalidade, kit e telefone — em ordem alfabética. 🏅\n\n` +
-    `MCU Night Run 2026 🌙⚡`;
+  const caption = `${testPrefix}*MISSÃO CUMPRIDA*\n\n` +
+    `Acabamos de bater os *1000 CONFIRMADOS* na MCU Night Run 2026!\n\n` +
+    `Isso é história sendo feita — a MAIOR corrida noturna da região está com a lista de atletas completa.\n\n` +
+    `Já vem chegando, em seguida, a lista oficial com todo mundo que confirmou presença.\n\n` +
+    `Vamos comemorar!`;
 
   // Manda o banner e o PDF em sequencia pro mesmo numero, sem esperar o throttle padrao entre
   // eles (esse delay existe pra disparos em massa pra numeros diferentes, nao faz sentido
-  // dentro do mesmo aviso) - assim os dois chegam praticamente juntos.
+  // dentro do mesmo aviso) - assim os dois chegam praticamente juntos. O PDF vai sem legenda,
+  // so o arquivo.
   const results = [];
   for (const phone of numbers) {
     const bannerResult = await sendMessage({ phone, text: caption, imageUrl: `data:image/png;base64,${bannerBase64}`, skipThrottle: true }, env).catch(error => ({ success: false, error: error.message }));
     const pdfResult = await sendMessage({
       phone,
-      text: pdfCaption,
       documentBase64: pdfBase64,
       documentMimeType: "application/pdf",
       documentFileName: `${test ? "teste-" : ""}1000-confirmados-mcu-night-run.pdf`,

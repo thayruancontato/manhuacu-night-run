@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
-import { CheckCircle, CalendarDays, MoonStar, ArrowRight, MapPin } from 'lucide-react';
+import { CheckCircle, CalendarDays, MoonStar, ArrowRight, MapPin, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase';
 
@@ -128,29 +128,30 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
           </div>
         </div>
 
-        <div className="animate-fade-up delay-3" style={{ width: '100%', marginTop: '14px' }}>
-          <button
-            type="button"
-            className="btn-start with-glow"
-            onClick={() => navigate('/endereco')}
-            style={{ borderRadius: '40px', width: '100%', height: '55px', fontSize: '1rem' }}
-          >
-            <MapPin size={20} />
-            INFORME SEU ENDEREÇO
-          </button>
-          <span className="endereco-cta-hint">Necessário para participar da premiação</span>
+        <div className="endereco-alerta-banner">
+          <AlertTriangle size={22} />
+          <div>
+            <strong>ATENÇÃO: FALTA INFORMAR SEU ENDEREÇO</strong>
+            <span>Obrigatório para participar da premiação por cidade</span>
+          </div>
         </div>
 
         <div className="animate-fade-up delay-3" style={{ width: '100%', marginTop: '10px' }}>
           <button
-            className="btn-start with-glow"
-            onClick={onViewList}
+            type="button"
+            className="btn-start with-glow endereco-btn-urgente"
+            onClick={() => navigate('/endereco')}
             style={{ borderRadius: '40px', width: '100%', height: '55px', fontSize: '1rem' }}
           >
-            VER LISTA DE ATLETAS INSCRITOS
-            <ArrowRight size={20} />
+            <MapPin size={20} />
+            INFORMAR ENDEREÇO AGORA
           </button>
         </div>
+
+        <button type="button" className="endereco-ver-lista-link" onClick={onViewList}>
+          Ver lista de atletas inscritos
+          <ArrowRight size={16} />
+        </button>
       </div>
     </div>
   );

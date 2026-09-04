@@ -5,6 +5,7 @@ import { AuthProvider } from './context/AuthContext';
 import ClosedRegistrations from './pages/ClosedRegistrations';
 import Home from './pages/Home';
 import AtletasConfirmados from './pages/AtletasConfirmados';
+import EnderecoAtleta from './pages/EnderecoAtleta';
 import AdminBateu1000Preview from './pages/AdminBateu1000Preview';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminInscritos from './pages/AdminInscritos';
@@ -68,6 +69,7 @@ function App() {
               {/* Public */}
               <Route path="/" element={<Home />} />
               <Route path="/atletas" element={<AtletasConfirmados />} />
+              <Route path="/endereco" element={<EnderecoAtleta />} />
               <Route path="/regulamento" element={<Regulamento />} />
               <Route path="/inscricao" element={<ClosedRegistrations />} />
               <Route path="/inscricao/pagamento/:registrationId" element={<PaymentPage />} />

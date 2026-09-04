@@ -906,6 +906,19 @@ export default {
         return json(result);
       }
 
+      if (cleanPath === "/thousand/send-now" && request.method === "POST") {
+        // Disparo manual do aviso REAL (nao teste) - usado pelo admin quando o gatilho
+        // automatico (increment na confirmacao + recalibracao do cron) ainda nao disparou
+        // por algum motivo, mas o contador ja bateu 1000 de verdade.
+        const counterDoc = await getFirestoreDocSafe(env, THOUSAND_COUNTER_DOC);
+        const count = Number(counterDoc?.fields?.count?.integerValue || 0);
+        if (count < THOUSAND_THRESHOLD) return json({ success: false, reason: "count_below_threshold", count }, 400);
+        const broadcastDoc = await getFirestoreDocSafe(env, THOUSAND_BROADCAST_DOC);
+        if (broadcastDoc?.fields?.sent?.booleanValue === true) return json({ success: false, reason: "already_sent" }, 400);
+        const result = await triggerThousandBroadcast(env, ctx, { test: false, count });
+        return json(result);
+      }
+
       // ==================== DOCS ====================
       if (cleanPath === "/docs" || cleanPath === "/") {
         return new Response(`<html><head><title>MCU Night Run API</title></head><body style="font-family:system-ui;background:#1B2150;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0"><div style="text-align:center"><h1 style="color:#D4E926;font-size:2.5rem">MCU Night Run API</h1><p>Worker ativo ✓</p><p style="opacity:.5;margin-top:20px">Endpoints: /asaas/*, /media/*, /queue/*, /whatsapp/*</p></div></body></html>`, {
@@ -3258,9 +3271,15 @@ async function maybeTriggerThousandBroadcast(env, ctx, count) {
   if (broadcastDoc?.fields?.sent?.booleanValue === true) return;
 
   console.log("[Thousand] Threshold reached, triggering real broadcast", { count });
-  await triggerThousandBroadcast(env, ctx, { test: false, count }).catch(error => {
+  try {
+    await triggerThousandBroadcast(env, ctx, { test: false, count });
+  } catch (error) {
     console.error("[Thousand] Broadcast failed", error);
-  });
+    // Libera o lock numa falha - sem isso, uma tentativa que quebra no meio do caminho
+    // trava qualquer nova tentativa automatica por ate 30 dias (o TTL do lock), mesmo com
+    // "sent" ainda false no Firestore. Assim o proximo tick do cron tenta de novo.
+    if (env.NIGHTRUN_STORAGE) await env.NIGHTRUN_STORAGE.delete(lockKey).catch(() => {});
+  }
 }
 
 async function fetchConfirmedRosterForBroadcast(env) {

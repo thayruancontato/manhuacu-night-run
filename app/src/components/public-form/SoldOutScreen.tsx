@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
-import { CheckCircle, CalendarDays, MoonStar, ArrowRight } from 'lucide-react';
+import { CheckCircle, CalendarDays, MoonStar, ArrowRight, MapPin } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase';
 
 interface SoldOutScreenProps {
@@ -12,6 +13,7 @@ interface SoldOutScreenProps {
 const PHOTOS_QUERY_LIMIT = 60;
 
 export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOutScreenProps) => {
+  const navigate = useNavigate();
   const [photos, setPhotos] = useState<string[]>([]);
 
   useEffect(() => {
@@ -126,7 +128,16 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
           </div>
         </div>
 
-        <div className="animate-fade-up delay-3" style={{ width: '100%', marginTop: '16px' }}>
+        <button type="button" className="endereco-cta animate-fade-up delay-3" onClick={() => navigate('/endereco')}>
+          <div className="endereco-cta-icon"><MapPin size={22} /></div>
+          <div className="endereco-cta-text">
+            <strong>INFORME SEU ENDEREÇO</strong>
+            <span>Necessário para participar da premiação</span>
+          </div>
+          <ArrowRight size={20} />
+        </button>
+
+        <div className="animate-fade-up delay-3" style={{ width: '100%', marginTop: '10px' }}>
           <button
             className="btn-start with-glow"
             onClick={onViewList}

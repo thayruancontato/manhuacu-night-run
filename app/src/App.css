@@ -6010,3 +6010,457 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+/* ===== CTA "Informe seu endereco" (SoldOutScreen) ===== */
+.endereco-cta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: linear-gradient(135deg, rgba(107,255,42,0.16), rgba(107,255,42,0.06));
+  border: 2px solid var(--accent);
+  border-radius: 18px;
+  padding: 14px 16px;
+  margin-top: 14px;
+  cursor: pointer;
+  box-shadow: 0 0 24px rgba(107,255,42,0.25);
+  animation: enderecoPulse 2.4s ease-in-out infinite;
+  text-align: left;
+}
+
+@keyframes enderecoPulse {
+  0%, 100% { box-shadow: 0 0 18px rgba(107,255,42,0.22); }
+  50% { box-shadow: 0 0 30px rgba(107,255,42,0.4); }
+}
+
+.endereco-cta-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #071A45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.endereco-cta-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.endereco-cta-text strong {
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.endereco-cta-text span {
+  color: rgba(255,255,255,0.75);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.endereco-cta svg:last-child { color: var(--accent); flex-shrink: 0; }
+
+/* ===== Pagina /endereco (wizard) ===== */
+.endereco-page {
+  min-height: 100svh;
+  background: #0b1030;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+}
+
+.endereco-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: rgba(255,255,255,0.7);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.endereco-loading-erro {
+  text-align: center;
+  color: #f87171;
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-top: 16px;
+}
+
+.endereco-loading-erro button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  text-decoration: underline;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.endereco-spinner {
+  color: var(--accent);
+  animation: naoEncontreiSpin 0.8s linear infinite;
+}
+
+.endereco-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.endereco-back {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #fff;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.endereco-header-titles h1 {
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 900;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.endereco-header-titles span {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.endereco-progress {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.endereco-progress-dot {
+  width: 32px;
+  height: 5px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.12);
+  transition: background 0.25s;
+}
+
+.endereco-progress-dot.active { background: var(--accent); }
+
+.endereco-step {
+  max-width: 480px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.endereco-step-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(107,255,42,0.12);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+
+.endereco-step-icon.success { background: rgba(107,255,42,0.18); }
+
+.endereco-step h2 {
+  color: #fff;
+  font-size: 1.2rem;
+  font-weight: 900;
+  text-align: center;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+.endereco-step > p {
+  color: rgba(255,255,255,0.65);
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-align: center;
+  margin: 0 0 22px;
+  line-height: 1.5;
+}
+
+.endereco-step-sucesso {
+  flex: 1;
+  justify-content: center;
+}
+
+.endereco-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: rgba(255,255,255,0.5);
+}
+
+.endereco-search-wrap:focus-within { border-color: rgba(107,255,42,0.45); }
+
+.endereco-search-wrap input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  min-height: 24px;
+}
+
+.endereco-search-wrap input::placeholder { color: rgba(255,255,255,0.35); }
+
+.endereco-search-wrap button {
+  background: rgba(255,255,255,0.1);
+  border: none;
+  color: #fff;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.endereco-resultados {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.endereco-resultados-vazio {
+  color: rgba(255,255,255,0.5);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 20px 0;
+}
+
+.endereco-resultado-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  padding: 12px 14px;
+  min-height: 56px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.endereco-resultado-item:hover { background: rgba(107,255,42,0.08); border-color: rgba(107,255,42,0.3); }
+
+.endereco-resultado-item span {
+  flex: 1;
+  min-width: 0;
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.endereco-resultado-item svg:last-child { color: rgba(255,255,255,0.35); flex-shrink: 0; }
+
+.endereco-resultado-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(107,255,42,0.12);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.endereco-resultado-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.endereco-selected-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 22px;
+}
+
+.endereco-selected-card span {
+  flex: 1;
+  min-width: 0;
+  color: #fff;
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.endereco-selected-card button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 6px 4px;
+}
+
+.endereco-field-label {
+  display: block;
+  color: rgba(255,255,255,0.75);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 6px;
+}
+
+.endereco-input {
+  width: 100%;
+  min-height: 50px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 12px;
+  padding: 0 14px;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.endereco-input:focus { border-color: rgba(107,255,42,0.5); }
+.endereco-input.erro { border-color: #f87171; }
+.endereco-input::placeholder { color: rgba(255,255,255,0.3); font-weight: 500; }
+
+.endereco-field-erro {
+  display: block;
+  color: #f87171;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.endereco-field-ajuda {
+  display: block;
+  color: rgba(255,255,255,0.45);
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.endereco-form-field { margin-bottom: 18px; }
+
+.endereco-form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.endereco-form-row .endereco-form-field { flex: 1; }
+
+.endereco-input-with-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.endereco-input-with-status input { flex: 1; }
+
+.endereco-input-with-status svg {
+  position: absolute;
+  right: 14px;
+}
+
+.endereco-status-ok { color: var(--accent); }
+
+.endereco-info-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: rgba(107,255,42,0.1);
+  border: 1px solid rgba(107,255,42,0.3);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 20px;
+  color: #fff;
+}
+
+.endereco-info-banner svg { color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+
+.endereco-info-banner span { font-size: 0.8rem; font-weight: 600; line-height: 1.4; }
+
+.endereco-btn-primary {
+  width: 100%;
+  height: 54px;
+  border-radius: 40px;
+  font-size: 0.95rem;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.endereco-btn-primary:disabled { opacity: 0.65; cursor: wait; }
+
+.endereco-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 18px;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.endereco-checkbox-row input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.endereco-checkbox-row span {
+  color: rgba(255,255,255,0.75);
+  font-size: 0.82rem;
+  font-weight: 600;
+}

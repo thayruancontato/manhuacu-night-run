@@ -3338,7 +3338,7 @@ function extractMediaKeyFromUrl(url) {
   return decodeURIComponent(url.slice(idx + marker.length).split("?")[0]);
 }
 
-async function fetchRosterPhotoRaw(env, url) {
+async function fetchRosterPhotoRaw(env, url, maxBytes = MAX_SOURCE_PHOTO_BYTES) {
   if (!url) return null;
   try {
     const key = extractMediaKeyFromUrl(url);
@@ -3359,7 +3359,7 @@ async function fetchRosterPhotoRaw(env, url) {
       contentType = res.headers.get("content-type") || "image/jpeg";
       buf = await res.arrayBuffer();
     }
-    if (buf.byteLength > MAX_SOURCE_PHOTO_BYTES) return null;
+    if (buf.byteLength > maxBytes) return null;
     return { base64: bytesToBase64Chunked(new Uint8Array(buf)), contentType };
   } catch (error) {
     console.warn("[Thousand] Falha ao baixar foto", { url, error: error.message });
@@ -3479,20 +3479,20 @@ async function generateThousandCelebrationBannerPng(env, roster = []) {
   const logoBase64 = await getOperationalLogoBase64(env);
   const W = 1200, H = 675;
 
-  // Amostra o dobro de fotos que cabem no mosaico, espalhadas pela lista inteira (nao so as
-  // primeiras em ordem alfabetica) - algumas sempre falham (foto grande demais, R2 sem
-  // objeto), entao pegamos candidatos extras e repetimos os que deram certo pra preencher
-  // TODOS os quadrados do fundo, sem sobrar nenhum vazio.
+  // Amostra bem mais candidatos do que cabe no mosaico, espalhados pela lista inteira (nao
+  // so as primeiras em ordem alfabetica) - algumas fotos sempre falham (grande demais pro
+  // limite, objeto sumiu do R2). Pegando uma pool bem maior que o necessario, sobra o
+  // suficiente pra preencher TODOS os quadrados sem repetir nenhuma foto.
   const COLS = 10, ROWS = 5;
   const sampleSize = COLS * ROWS;
-  const candidateCount = Math.min(roster.length, sampleSize * 2);
+  const candidateCount = Math.min(roster.length, 220);
   const step = Math.max(1, Math.floor(roster.length / candidateCount));
   const candidates = roster.filter((_, i) => i % step === 0).slice(0, candidateCount);
-  const fetched = await mapWithConcurrency(candidates, 20, item => fetchRosterPhotoRaw(env, item.fotoUrl));
-  const successes = fetched.filter(Boolean);
-  const thumbs = successes.length > 0
-    ? Array.from({ length: sampleSize }, (_, i) => successes[i % successes.length])
-    : [];
+  // Limite bem mais folgado que o padrao: o banner so embute ~50 fotos no total (uma unica
+  // renderizacao), entao da pra aceitar fotos maiores sem risco do mesmo estouro de CPU/
+  // memoria que aconteceria tentando fazer isso pras quase 1000 do PDF.
+  const fetched = await mapWithConcurrency(candidates, 20, item => fetchRosterPhotoRaw(env, item.fotoUrl, 140_000));
+  const thumbs = fetched.filter(Boolean).slice(0, sampleSize);
 
   const tileW = W / COLS, tileH = H / ROWS;
   const mosaic = thumbs.map((photo, i) => {

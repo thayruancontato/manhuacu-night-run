@@ -40,8 +40,10 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
     return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   })();
 
-  const columnA = photos.filter((_, i) => i % 2 === 0);
-  const columnB = photos.filter((_, i) => i % 2 === 1);
+  const NUM_COLUMNS = 8;
+  const columns = Array.from({ length: NUM_COLUMNS }, (_, colIndex) =>
+    photos.filter((_, i) => i % NUM_COLUMNS === colIndex)
+  ).filter(col => col.length > 0);
 
   return (
     <div className="landing-page pro-version sold-out-screen">
@@ -49,20 +51,19 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
 
       {photos.length > 0 && (
         <div className="sold-out-photo-bg" aria-hidden="true">
-          <div className="sold-out-photo-col sold-out-photo-col-up">
-            {[...columnA, ...columnA].map((url, i) => (
-              <div className="sold-out-photo-card" key={`a-${i}`}>
-                <img src={url} alt="" loading="lazy" />
-              </div>
-            ))}
-          </div>
-          <div className="sold-out-photo-col sold-out-photo-col-down">
-            {[...columnB, ...columnB].map((url, i) => (
-              <div className="sold-out-photo-card" key={`b-${i}`}>
-                <img src={url} alt="" loading="lazy" />
-              </div>
-            ))}
-          </div>
+          {columns.map((col, colIndex) => (
+            <div
+              className={`sold-out-photo-col ${colIndex % 2 === 0 ? 'sold-out-photo-col-up' : 'sold-out-photo-col-down'}`}
+              key={colIndex}
+              style={{ animationDelay: `${-(colIndex * 4)}s` }}
+            >
+              {[...col, ...col].map((url, i) => (
+                <div className="sold-out-photo-card" key={`${colIndex}-${i}`}>
+                  <img src={url} alt="" loading="lazy" />
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       )}
 

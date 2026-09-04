@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { ArrowLeft, Search, User, Users, X } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Search, User, Users, X } from 'lucide-react';
 import { db } from '../firebase';
 import { formatDateBR } from '../utils/dateUtils';
 import '../App.css';
@@ -139,6 +139,10 @@ export default function AtletasConfirmados() {
                     <div className="atletas-confirmados-info">
                       <strong>{atleta.nome}</strong>
                       <span>Inscrito em {atleta.dataInscricao}</span>
+                      <div className="atletas-confirmados-badge">
+                        <CheckCircle2 size={12} />
+                        <span>Atleta confirmado</span>
+                      </div>
                     </div>
                   </div>
                 ))}

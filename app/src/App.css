@@ -5810,3 +5810,23 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   font-size: 0.68rem;
   font-weight: 600;
 }
+
+.atletas-confirmados-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  width: fit-content;
+  background: rgba(107,255,42,0.14);
+  border: 1px solid rgba(107,255,42,0.3);
+  color: var(--accent);
+  padding: 3px 8px;
+  border-radius: 20px;
+}
+
+.atletas-confirmados-badge span {
+  color: var(--accent);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}

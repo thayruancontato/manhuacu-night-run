@@ -147,7 +147,12 @@ export default function AtletasConfirmados() {
                         <CheckCircle2 size={12} />
                         <span>Atleta confirmado</span>
                       </div>
-                      {!atleta.enderecoPreenchido && (
+                      {atleta.enderecoPreenchido ? (
+                        <div className="atletas-confirmados-badge">
+                          <CheckCircle2 size={12} />
+                          <span>Endereço preenchido</span>
+                        </div>
+                      ) : (
                         <button
                           type="button"
                           className="atletas-confirmados-endereco-alerta"

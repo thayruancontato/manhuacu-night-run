@@ -52,7 +52,11 @@ export default function NaoEncontreiModal({ onClose }: NaoEncontreiModalProps) {
       const res = await fetch(`${workerUrl}/whatsapp/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: cleanPhone, text: buildWhatsAppText() }),
+        body: JSON.stringify({
+          phone: cleanPhone,
+          text: buildWhatsAppText(),
+          imageUrl: `${window.location.origin}/whatsapp-header-verificacao.png`,
+        }),
       });
       const data = await res.json().catch(() => null);
       whatsappEnviado = Boolean(data?.success);

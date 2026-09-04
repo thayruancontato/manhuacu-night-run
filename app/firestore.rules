@@ -116,5 +116,13 @@ service cloud.firestore {
     match /nightrun_planilha_modelos/{modeloId} {
       allow read, write: if isAdmin();
     }
+
+    // Pedidos de verificacao manual ("me inscrevi mas nao estou na lista"): qualquer um
+    // pode criar o proprio pedido (formulario publico so pede telefone), mas so o admin
+    // le/gerencia a lista - tem telefone de gente que nao necessariamente e atleta confirmado.
+    match /nightrun_verification_requests/{requestId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
   }
 }

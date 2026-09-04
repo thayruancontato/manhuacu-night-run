@@ -48,6 +48,7 @@ import AdminContaHistorico from './pages/AdminContaHistorico';
 import AdminFaturas from './pages/AdminFaturas';
 import AdminFinanceiroRelatorios from './pages/AdminFinanceiroRelatorios';
 import AdminFinanceiroDefinicoes from './pages/AdminFinanceiroDefinicoes';
+import AdminVerificacoesManuais from './pages/AdminVerificacoesManuais';
 import './App.css';
 
 const Placeholder = ({ title }: { title: string }) => (
@@ -99,6 +100,7 @@ function App() {
                 <Route path="kits" element={<AdminKits />} />
                 <Route path="presenca" element={<AdminPresenca />} />
                 <Route path="card-euvou" element={<AdminCardEuVou />} />
+                <Route path="verificacoes-manuais" element={<AdminVerificacoesManuais />} />
                 <Route path="mensagens" element={<AdminMensagens />} />
                 <Route path="whatsapp" element={<AdminMensagensConfig />} />
                 <Route path="mensagens/personalizadas" element={<AdminMensagensPersonalizadas />} />

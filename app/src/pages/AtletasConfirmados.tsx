@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { ArrowLeft, CheckCircle2, Search, User, Users, X } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, MessageCircleQuestion, Search, User, Users, X } from 'lucide-react';
 import { db } from '../firebase';
 import { formatDateBR } from '../utils/dateUtils';
+import NaoEncontreiModal from '../components/public-form/NaoEncontreiModal';
 import '../App.css';
 
 type AtletaConfirmado = {
@@ -29,6 +30,7 @@ export default function AtletasConfirmados() {
   const [atletas, setAtletas] = useState<AtletaConfirmado[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [showNaoEncontrei, setShowNaoEncontrei] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -151,6 +153,15 @@ export default function AtletasConfirmados() {
           ))}
         </div>
       )}
+
+      <div className="atletas-confirmados-fab-wrap">
+        <button type="button" className="atletas-confirmados-fab" onClick={() => setShowNaoEncontrei(true)}>
+          <MessageCircleQuestion size={18} />
+          Me inscrevi mas não estou na lista
+        </button>
+      </div>
+
+      {showNaoEncontrei && <NaoEncontreiModal onClose={() => setShowNaoEncontrei(false)} />}
     </div>
   );
 }

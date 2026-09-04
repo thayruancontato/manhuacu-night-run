@@ -5590,7 +5590,7 @@ input[type="radio"], input[type="checkbox"] { display:none; }
 .atletas-confirmados-page {
   min-height: 100svh;
   background: #0b1030;
-  padding: 138px 16px 50px;
+  padding: 138px 16px 100px;
 }
 
 .atletas-confirmados-header {
@@ -5834,4 +5834,179 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.2px;
+}
+
+/* ===== "Não estou na lista" FAB + modal ===== */
+.atletas-confirmados-fab-wrap {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 6;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.atletas-confirmados-fab {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #111633;
+  border: 1px solid rgba(107,255,42,0.4);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+  backdrop-filter: blur(8px);
+}
+
+.atletas-confirmados-fab:hover {
+  background: rgba(107,255,42,0.12);
+}
+
+.nao-encontrei-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5,8,20,0.72);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 50;
+  padding: 0;
+}
+
+.nao-encontrei-modal {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  background: #10142f;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 22px 22px 0 0;
+  padding: 28px 22px max(22px, env(safe-area-inset-bottom));
+  text-align: center;
+  animation: naoEncontreiSlideUp 0.25s ease-out;
+}
+
+@media (min-width: 560px) {
+  .nao-encontrei-overlay { align-items: center; padding: 20px; }
+  .nao-encontrei-modal { border-radius: 22px; }
+}
+
+@keyframes naoEncontreiSlideUp {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.nao-encontrei-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: rgba(255,255,255,0.08);
+  border: none;
+  color: #fff;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.nao-encontrei-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(107,255,42,0.12);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 14px;
+}
+
+.nao-encontrei-icon.success { background: rgba(107,255,42,0.18); }
+
+.nao-encontrei-modal h3 {
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  margin: 0 0 8px;
+}
+
+.nao-encontrei-modal p {
+  color: rgba(255,255,255,0.65);
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.5;
+  margin: 0 0 18px;
+}
+
+.nao-encontrei-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 14px;
+  padding: 13px 14px;
+  color: rgba(255,255,255,0.5);
+}
+
+.nao-encontrei-input-wrap:focus-within {
+  border-color: rgba(107,255,42,0.45);
+}
+
+.nao-encontrei-input-wrap input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.nao-encontrei-input-wrap input::placeholder {
+  color: rgba(255,255,255,0.35);
+  font-weight: 500;
+}
+
+.nao-encontrei-error {
+  display: block;
+  color: #f87171;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-top: 8px;
+  text-align: left;
+}
+
+.nao-encontrei-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 30px 0 10px;
+  color: rgba(255,255,255,0.7);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.nao-encontrei-spinner {
+  color: var(--accent);
+  animation: naoEncontreiSpin 0.8s linear infinite;
+}
+
+@keyframes naoEncontreiSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }

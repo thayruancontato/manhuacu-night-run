@@ -3479,14 +3479,20 @@ async function generateThousandCelebrationBannerPng(env, roster = []) {
   const logoBase64 = await getOperationalLogoBase64(env);
   const W = 1200, H = 675;
 
-  // Amostra ~50 fotos espalhadas pela lista inteira (nao so as primeiras em ordem alfabetica),
-  // pra formar um mosaico representativo. Mesma concorrencia baixa + limite de tamanho + free()
-  // ja validados na geracao do PDF, senao arrisca o mesmo vazamento de memoria do WASM.
+  // Amostra o dobro de fotos que cabem no mosaico, espalhadas pela lista inteira (nao so as
+  // primeiras em ordem alfabetica) - algumas sempre falham (foto grande demais, R2 sem
+  // objeto), entao pegamos candidatos extras e repetimos os que deram certo pra preencher
+  // TODOS os quadrados do fundo, sem sobrar nenhum vazio.
   const COLS = 10, ROWS = 5;
   const sampleSize = COLS * ROWS;
-  const step = Math.max(1, Math.floor(roster.length / sampleSize));
-  const sample = roster.filter((_, i) => i % step === 0).slice(0, sampleSize);
-  const thumbs = await mapWithConcurrency(sample, 20, item => fetchRosterPhotoRaw(env, item.fotoUrl));
+  const candidateCount = Math.min(roster.length, sampleSize * 2);
+  const step = Math.max(1, Math.floor(roster.length / candidateCount));
+  const candidates = roster.filter((_, i) => i % step === 0).slice(0, candidateCount);
+  const fetched = await mapWithConcurrency(candidates, 20, item => fetchRosterPhotoRaw(env, item.fotoUrl));
+  const successes = fetched.filter(Boolean);
+  const thumbs = successes.length > 0
+    ? Array.from({ length: sampleSize }, (_, i) => successes[i % successes.length])
+    : [];
 
   const tileW = W / COLS, tileH = H / ROWS;
   const mosaic = thumbs.map((photo, i) => {

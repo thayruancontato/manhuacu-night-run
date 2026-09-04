@@ -41,9 +41,18 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
   })();
 
   const NUM_COLUMNS = 8;
-  const columns = Array.from({ length: NUM_COLUMNS }, (_, colIndex) =>
-    photos.filter((_, i) => i % NUM_COLUMNS === colIndex)
-  ).filter(col => col.length > 0);
+  // Cada coluna faz um loop infinito (o miolo é renderizado 2x e a animação anda -50%,
+  // que é exatamente uma "volta" de conteúdo). Se a coluna tiver poucas fotos, uma volta
+  // fica mais baixa que a tela e aparece um buraco vazio no ponto em que ela reinicia -
+  // por isso repetimos as fotos da coluna até garantir uma altura mínima segura.
+  const MIN_CARDS_PER_LOOP = 20;
+  const columns = Array.from({ length: NUM_COLUMNS }, (_, colIndex) => {
+    const base = photos.filter((_, i) => i % NUM_COLUMNS === colIndex);
+    if (base.length === 0) return [];
+    const padded: string[] = [];
+    while (padded.length < MIN_CARDS_PER_LOOP) padded.push(...base);
+    return padded;
+  }).filter(col => col.length > 0);
 
   return (
     <div className="landing-page pro-version sold-out-screen">

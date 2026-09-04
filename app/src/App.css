@@ -5836,6 +5836,32 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   letter-spacing: 0.2px;
 }
 
+.atletas-confirmados-endereco-alerta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  background: rgba(239,68,68,0.14);
+  border: 1px solid rgba(239,68,68,0.45);
+  color: #f87171;
+  padding: 4px 9px;
+  border-radius: 20px;
+  cursor: pointer;
+  text-align: left;
+  width: fit-content;
+}
+
+.atletas-confirmados-endereco-alerta:hover { background: rgba(239,68,68,0.22); }
+
+.atletas-confirmados-endereco-alerta svg { flex-shrink: 0; }
+
+.atletas-confirmados-endereco-alerta span {
+  color: #f87171;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
 /* ===== "Não estou na lista" FAB + modal ===== */
 .atletas-confirmados-fab-wrap {
   position: fixed;
@@ -6012,62 +6038,14 @@ input[type="radio"], input[type="checkbox"] { display:none; }
 }
 
 /* ===== CTA "Informe seu endereco" (SoldOutScreen) ===== */
-.endereco-cta {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: linear-gradient(135deg, rgba(107,255,42,0.16), rgba(107,255,42,0.06));
-  border: 2px solid var(--accent);
-  border-radius: 18px;
-  padding: 14px 16px;
-  margin-top: 14px;
-  cursor: pointer;
-  box-shadow: 0 0 24px rgba(107,255,42,0.25);
-  animation: enderecoPulse 2.4s ease-in-out infinite;
-  text-align: left;
-}
-
-@keyframes enderecoPulse {
-  0%, 100% { box-shadow: 0 0 18px rgba(107,255,42,0.22); }
-  50% { box-shadow: 0 0 30px rgba(107,255,42,0.4); }
-}
-
-.endereco-cta-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  background: var(--accent);
-  color: #071A45;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.endereco-cta-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.endereco-cta-text strong {
-  color: #fff;
-  font-size: 0.88rem;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-
-.endereco-cta-text span {
-  color: rgba(255,255,255,0.75);
+.endereco-cta-hint {
+  display: block;
+  text-align: center;
+  color: rgba(255,255,255,0.55);
   font-size: 0.72rem;
   font-weight: 600;
+  margin-top: 8px;
 }
-
-.endereco-cta svg:last-child { color: var(--accent); flex-shrink: 0; }
 
 /* ===== Pagina /endereco (wizard) ===== */
 .endereco-page {

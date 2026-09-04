@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { ArrowLeft, CheckCircle2, MessageCircleQuestion, Search, User, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CheckCircle2, MessageCircleQuestion, Search, User, Users, X } from 'lucide-react';
 import { db } from '../firebase';
 import { formatDateBR } from '../utils/dateUtils';
 import NaoEncontreiModal from '../components/public-form/NaoEncontreiModal';
@@ -14,6 +14,7 @@ type AtletaConfirmado = {
   dataInscricao: string;
   searchNome: string;
   searchDigits: string;
+  enderecoPreenchido: boolean;
 };
 
 const DIACRITICS_RE = /[̀-ͯ]/g;
@@ -48,6 +49,7 @@ export default function AtletasConfirmados() {
             dataInscricao: formatDateBR(data.createdAt, ''),
             searchNome: normalizeText(nome),
             searchDigits: `${onlyDigits(data.telefone || '')} ${onlyDigits(data.cpf || '')}`,
+            enderecoPreenchido: Boolean(data.enderecoPreenchidoEm),
           };
         });
         list.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
@@ -145,6 +147,16 @@ export default function AtletasConfirmados() {
                         <CheckCircle2 size={12} />
                         <span>Atleta confirmado</span>
                       </div>
+                      {!atleta.enderecoPreenchido && (
+                        <button
+                          type="button"
+                          className="atletas-confirmados-endereco-alerta"
+                          onClick={() => navigate('/endereco')}
+                        >
+                          <AlertTriangle size={12} />
+                          <span>Endereço pendente — clique para preencher</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

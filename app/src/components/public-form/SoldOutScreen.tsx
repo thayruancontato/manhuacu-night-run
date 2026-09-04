@@ -128,14 +128,18 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
           </div>
         </div>
 
-        <button type="button" className="endereco-cta animate-fade-up delay-3" onClick={() => navigate('/endereco')}>
-          <div className="endereco-cta-icon"><MapPin size={22} /></div>
-          <div className="endereco-cta-text">
-            <strong>INFORME SEU ENDEREÇO</strong>
-            <span>Necessário para participar da premiação</span>
-          </div>
-          <ArrowRight size={20} />
-        </button>
+        <div className="animate-fade-up delay-3" style={{ width: '100%', marginTop: '14px' }}>
+          <button
+            type="button"
+            className="btn-start with-glow"
+            onClick={() => navigate('/endereco')}
+            style={{ borderRadius: '40px', width: '100%', height: '55px', fontSize: '1rem' }}
+          >
+            <MapPin size={20} />
+            INFORME SEU ENDEREÇO
+          </button>
+          <span className="endereco-cta-hint">Necessário para participar da premiação</span>
+        </div>
 
         <div className="animate-fade-up delay-3" style={{ width: '100%', marginTop: '10px' }}>
           <button

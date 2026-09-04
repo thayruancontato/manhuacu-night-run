@@ -6,9 +6,12 @@ import { CheckCircle, Copy, CreditCard, Clock } from 'lucide-react';
 import { useDialog } from '../context/CustomDialogContext';
 import LoadingModal from '../components/LoadingModal';
 import { LogoCombo } from '../components/LogoCombo';
+import { useThousandGuard } from '../hooks/useThousandGuard';
 import '../App.css';
 
 export default function PaymentPage() {
+  // Corta na hora se o limite de 1000 confirmados bater enquanto alguém está pagando.
+  useThousandGuard();
   const { registrationId } = useParams();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);

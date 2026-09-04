@@ -2003,3 +2003,6 @@ html, body, #root {
     width: 100%;
   }
 }
+
+.spin-anim { animation: admSpinAnim 0.8s linear infinite; }
+@keyframes admSpinAnim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

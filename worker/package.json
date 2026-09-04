@@ -1,1 +1,1 @@
-{"name":"mcu-nightrun-worker","version":"1.0.0","private":true,"scripts":{"dev":"npx wrangler dev","deploy":"npx wrangler deploy","test":"node --test"},"dependencies":{"@resvg/resvg-wasm":"^2.6.2"}}
+{"name":"mcu-nightrun-worker","version":"1.0.0","private":true,"scripts":{"dev":"npx wrangler dev","deploy":"npx wrangler deploy","test":"node --test"},"dependencies":{"@resvg/resvg-wasm":"^2.6.2","pdf-lib":"^1.17.1"}}

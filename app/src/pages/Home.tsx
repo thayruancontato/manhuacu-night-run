@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
-import { collection, doc, getCountFromServer, getDoc, query, where } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, onSnapshot } from 'firebase/firestore';
 import { LandingPage } from '../components/public-form/LandingPage';
 import { SoldOutScreen } from '../components/public-form/SoldOutScreen';
 import { KitDrawer } from '../components/public-form/KitDrawer';
 import ClosedRegistrations from './ClosedRegistrations';
+import { THOUSAND_THRESHOLD } from '../hooks/useThousandGuard';
 import '../App.css';
-
-const CONFIRMED_SOLD_OUT_THRESHOLD = 1000;
 
 export default function Home() {
   const [vagas, setVagas] = useState<number | null>(null);
@@ -69,14 +68,16 @@ export default function Home() {
     })();
   }, []);
 
+  // Contador de confirmados ao vivo (nightrun_settings/confirmed_counter), mantido pelo
+  // worker via incremento atomico a cada confirmacao de pagamento + recalibracao por cron.
+  // onSnapshot em vez de leitura unica: assim que cruzar 1000 em qualquer lugar (mesmo com
+  // outra pessoa confirmando o pagamento agora), todo mundo com a Home aberta ve a troca pra
+  // tela de esgotado na hora, sem precisar recarregar a pagina.
   useEffect(() => {
-    (async () => {
-      try {
-        const q = query(collection(db, 'nightrun_registrations'), where('paymentStatus', '==', 'pago'));
-        const snap = await getCountFromServer(q);
-        setConfirmedCount(snap.data().count);
-      } catch (e) { console.error('Erro ao buscar inscritos confirmados', e); }
-    })();
+    const unsub = onSnapshot(doc(db, 'nightrun_settings', 'confirmed_counter'), snap => {
+      setConfirmedCount(Number(snap.data()?.count ?? 0));
+    }, error => console.error('Erro ao acompanhar inscritos confirmados', error));
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -115,12 +116,12 @@ export default function Home() {
   const handleRegulation = () => navigate('/regulamento');
 
   if (loadingSetting) return null;
-  if (registrationsClosed && !bypassClosedScreen) {
-    return <ClosedRegistrations />;
-  }
 
-  const soldOut = confirmedCount !== null && confirmedCount >= CONFIRMED_SOLD_OUT_THRESHOLD;
+  const soldOut = confirmedCount !== null && confirmedCount >= THOUSAND_THRESHOLD;
 
+  // O limite automatico de 1000 confirmados tem prioridade sobre o fechamento manual: se
+  // bateu 1000, mostra sempre a tela de esgotado (mais informativa) em vez da mensagem
+  // genérica de manutenção, mesmo que o admin não tenha mexido no toggle manual.
   if (soldOut) {
     return (
       <div className="public-app-root public-home-root">
@@ -133,6 +134,10 @@ export default function Home() {
         </main>
       </div>
     );
+  }
+
+  if (registrationsClosed && !bypassClosedScreen) {
+    return <ClosedRegistrations />;
   }
 
   return (

@@ -20,9 +20,11 @@ import {
   Users,
   XCircle,
   Trash2,
+  PartyPopper,
 } from 'lucide-react';
 import { db } from '../firebase';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
+import ThousandBroadcastPanel from '../components/ThousandBroadcastPanel';
 import { FormInput, FormSwitch, FormTextarea } from '../components/AdminForm';
 import LoadingModal from '../components/LoadingModal';
 import { useDialog } from '../context/CustomDialogContext';
@@ -63,7 +65,7 @@ type QueueItem = {
   attempts?: number;
 };
 
-type TabId = 'numeros' | 'lote' | 'fila' | 'teste' | 'api' | 'automacoes' | 'resumo';
+type TabId = 'numeros' | 'lote' | 'fila' | 'teste' | 'api' | 'automacoes' | 'resumo' | 'milconfirmados';
 
 type OperationalConfig = {
   enabled: boolean;
@@ -146,7 +148,7 @@ export default function AdminMensagensConfig() {
   const [qrWatcherActive, setQrWatcherActive] = useState(false);
   const [lastQrRefreshAt, setLastQrRefreshAt] = useState<number | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabIds: TabId[] = ['numeros', 'lote', 'fila', 'teste', 'api', 'automacoes', 'resumo'];
+  const validTabIds: TabId[] = ['numeros', 'lote', 'fila', 'teste', 'api', 'automacoes', 'resumo', 'milconfirmados'];
   const tabFromUrl = searchParams.get('tab') as TabId | null;
   const activeTab: TabId = tabFromUrl && validTabIds.includes(tabFromUrl) ? tabFromUrl : 'numeros';
   const setActiveTab = (tab: TabId) => {
@@ -933,6 +935,7 @@ export default function AdminMensagensConfig() {
             { id: 'api', label: 'EVOLUTION API', icon: <KeyRound size={18} /> },
             { id: 'automacoes', label: 'AUTOMACOES', icon: <Clock size={18} /> },
             { id: 'resumo', label: 'RESUMO DIARIO', icon: <ClipboardCheck size={18} /> },
+            { id: 'milconfirmados', label: '1000 CONFIRMADOS', icon: <PartyPopper size={18} /> },
           ].map(tab => (
             <button
               key={tab.id}
@@ -1483,6 +1486,8 @@ export default function AdminMensagensConfig() {
               </button>
             </SectionCard>
           )}
+
+          {activeTab === 'milconfirmados' && <ThousandBroadcastPanel workerUrl={workerUrl} showAlert={showAlert} />}
         </div>
       </div>
 

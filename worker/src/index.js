@@ -6,6 +6,7 @@
 import { Resvg, initWasm } from "@resvg/resvg-wasm";
 import RESVG_WASM_MODULE from "@resvg/resvg-wasm/index_bg.wasm";
 import MONTSERRAT_TTF from "./assets/montserrat-800.ttf";
+import { PDFDocument } from "pdf-lib";
 
 let resvgWasmReady = null;
 async function ensureResvgWasm() {
@@ -67,7 +68,11 @@ async function generateOperationalBannerPng(env, shortDateLabel) {
     fitTo: { mode: "width", value: W },
     font: { fontBuffers: [new Uint8Array(MONTSERRAT_TTF)], loadSystemFonts: false, defaultFontFamily: "Montserrat" },
   });
-  return resvg.render().asPng();
+  const rendered = resvg.render();
+  const png = rendered.asPng();
+  rendered.free();
+  resvg.free();
+  return png;
 }
 
 function pngToDataUri(pngBytes) {
@@ -861,6 +866,36 @@ export default {
         return json(result);
       }
 
+      // ==================== 1000 CONFIRMADOS ====================
+      if (cleanPath === "/thousand/status" && request.method === "GET") {
+        const counterDoc = await getFirestoreDocSafe(env, THOUSAND_COUNTER_DOC);
+        const broadcastDoc = await getFirestoreDocSafe(env, THOUSAND_BROADCAST_DOC);
+        const numbers = (broadcastDoc?.fields?.numbers?.arrayValue?.values || []).map(v => v.stringValue).filter(Boolean);
+        return json({
+          count: Number(counterDoc?.fields?.count?.integerValue || 0),
+          sent: broadcastDoc?.fields?.sent?.booleanValue === true,
+          sentAt: broadcastDoc?.fields?.sentAt?.timestampValue || null,
+          numbers
+        });
+      }
+
+      if (cleanPath === "/thousand/numbers" && request.method === "POST") {
+        const body = await request.json();
+        const numbers = Array.isArray(body.numbers) ? body.numbers.map(n => String(n || "").trim()).filter(Boolean) : [];
+        await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${THOUSAND_BROADCAST_DOC}?key=${env.FIREBASE_API_KEY}&updateMask.fieldPaths=numbers`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { numbers: { arrayValue: { values: numbers.map(n => ({ stringValue: n })) } } } })
+        });
+        return json({ success: true, numbers });
+      }
+
+      if (cleanPath === "/thousand/test-broadcast" && request.method === "POST") {
+        const dryRun = url.searchParams.get("dry") === "1";
+        const result = await triggerThousandBroadcast(env, ctx, { test: true, dryRun });
+        return json(result);
+      }
+
       // ==================== DOCS ====================
       if (cleanPath === "/docs" || cleanPath === "/") {
         return new Response(`<html><head><title>MCU Night Run API</title></head><body style="font-family:system-ui;background:#1B2150;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0"><div style="text-align:center"><h1 style="color:#D4E926;font-size:2.5rem">MCU Night Run API</h1><p>Worker ativo ✓</p><p style="opacity:.5;margin-top:20px">Endpoints: /asaas/*, /media/*, /queue/*, /whatsapp/*</p></div></body></html>`, {
@@ -870,6 +905,7 @@ export default {
 
       return json({ error: "Not Found", path, cleanPath }, 404);
     } catch (err) {
+      console.error("[Worker] Unhandled error", { path, message: err?.message, stack: err?.stack });
       return json({ error: err.message }, 500);
     }
   },
@@ -884,6 +920,10 @@ export default {
     if (new Date().getMinutes() % 5 === 0) {
       ctx.waitUntil(autoReconcilePendingPayments(env, ctx).catch(error => console.error("[Auto Reconcile] scheduled failed", error)));
     }
+    // Rede de seguranca do limite de 1000 confirmados: todo minuto, recalibra o contador
+    // contra a contagem real do Firestore (corrige qualquer caminho que confirme pagamento
+    // sem passar por confirmRegistrationDocument) e dispara o aviso se ja tiver cruzado 1000.
+    ctx.waitUntil(recalibrateConfirmedCounter(env, ctx).catch(error => console.error("[Thousand] recalibration scheduled failed", error)));
     await processQueue(env);
   }
 };
@@ -2823,6 +2863,17 @@ async function confirmRegistrationDocument(env, document, ctx, options = {}) {
       body: JSON.stringify({ fields: patchFields })
     });
     console.log("[Payment Confirm] Firestore patch", { registrationId, status: patchRes.status, ok: patchRes.ok });
+
+    // Conta atomicamente essa confirmacao pro limite de 1000 - dispara o aviso automatico
+    // (WhatsApp + PDF pros numeros configurados) na hora exata em que o contador cruza 1000.
+    // Cobre pagamentos reais (webhook) e confirmacao manual do admin, que passam por aqui;
+    // o cron de 1 em 1 minuto recalibra o contador contra a contagem real do Firestore como
+    // rede de seguranca pra qualquer caminho que confirme pagamento sem passar por essa funcao.
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(bumpConfirmedCounterAndMaybeBroadcast(env, ctx));
+    } else {
+      await bumpConfirmedCounterAndMaybeBroadcast(env, ctx);
+    }
   }
 
   let notifyResult = null;
@@ -3006,7 +3057,7 @@ async function sendMessage(msg, env) {
   const normalizedPhone = formatPhoneForWhatsApp(msg.phone);
   const selectedInstance = await chooseWhatsAppInstance(env, msg.instanceName || "");
   const instanceName = selectedInstance.instanceName;
-  console.log("[WhatsApp Send] Start", { phone: msg.phone, normalizedPhone, hasImage: Boolean(msg.imageUrl), instanceName, instanceSource: selectedInstance.source });
+  console.log("[WhatsApp Send] Start", { phone: msg.phone, normalizedPhone, hasImage: Boolean(msg.imageUrl), hasDocument: Boolean(msg.documentBase64), instanceName, instanceSource: selectedInstance.source });
   const keepAliveResult = await keepWhatsAppAlive(env, instanceName);
   console.log("[WhatsApp Send] KeepAlive result", keepAliveResult);
   if (keepAliveResult.state !== "open") {
@@ -3025,11 +3076,19 @@ async function sendMessage(msg, env) {
   if (throttle.waitedMs > 0) {
     console.log("[WhatsApp Send] Instance throttle", { instanceName, waitedMs: throttle.waitedMs });
   }
-  const isMedia = !!msg.imageUrl;
-  const endpoint = isMedia ? `/message/sendMedia/${instanceName}` : `/message/sendText/${instanceName}`;
+  const isDocument = !!msg.documentBase64;
+  const isMedia = !isDocument && !!msg.imageUrl;
+  const endpoint = (isMedia || isDocument) ? `/message/sendMedia/${instanceName}` : `/message/sendText/${instanceName}`;
   const payload = { number: normalizedPhone };
 
-  if (isMedia) {
+  if (isDocument) {
+    payload.mediatype = "document";
+    payload.mediaType = "document";
+    payload.mimetype = msg.documentMimeType || "application/pdf";
+    payload.fileName = msg.documentFileName || "documento.pdf";
+    payload.caption = msg.text;
+    payload.media = msg.documentBase64;
+  } else if (isMedia) {
     let media = msg.imageUrl, mime = "image/png";
     if (msg.imageUrl.startsWith("data:")) {
       const match = msg.imageUrl.match(/^data:([^;]+);base64,(.*)$/);
@@ -3075,6 +3134,437 @@ async function sendMessage(msg, env) {
     response: jsonRes
   });
   return { success: res.ok, status: res.ok ? "SUCESSO" : "ERRO", httpStatus: res.status, normalizedError, instanceName, response: jsonRes };
+}
+
+// ==================== 1000 CONFIRMADOS: contador, PDF, banner, disparo ====================
+
+const THOUSAND_COUNTER_DOC = "nightrun_settings/confirmed_counter";
+const THOUSAND_BROADCAST_DOC = "nightrun_settings/thousand_broadcast";
+const THOUSAND_THRESHOLD = 1000;
+
+async function getFirestoreDocSafe(env, docPath) {
+  const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${docPath}?key=${env.FIREBASE_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// Incrementa um campo numerico atomicamente via fieldTransforms.increment (operacao nativa
+// do Firestore, sem race condition mesmo com varias confirmacoes de pagamento chegando quase
+// juntas) e devolve o valor resultante direto da resposta do commit.
+async function firestoreIncrementField(env, docPath, fieldPath, delta) {
+  const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:commit?key=${env.FIREBASE_API_KEY}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      writes: [{
+        transform: {
+          document: `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${docPath}`,
+          fieldTransforms: [{ fieldPath, increment: { integerValue: String(delta) } }]
+        }
+      }]
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Falha ao incrementar ${docPath}.${fieldPath}: ${res.status} ${text}`);
+  }
+  const data = await res.json();
+  const transformResult = data?.writeResults?.[0]?.transformResults?.[0];
+  return Number(transformResult?.integerValue ?? transformResult?.doubleValue ?? 0);
+}
+
+async function bumpConfirmedCounterAndMaybeBroadcast(env, ctx) {
+  try {
+    const newCount = await firestoreIncrementField(env, THOUSAND_COUNTER_DOC, "count", 1);
+    console.log("[Thousand] Counter incremented", { newCount });
+    if (newCount >= THOUSAND_THRESHOLD) {
+      await maybeTriggerThousandBroadcast(env, ctx, newCount);
+    }
+  } catch (error) {
+    console.error("[Thousand] Failed to increment counter", error);
+  }
+}
+
+// Roda no cron a cada minuto: recalibra o contador contra a contagem real do Firestore.
+// Rede de seguranca pra qualquer caminho que confirme pagamento sem passar pelo incremento
+// acima (ex: inscricao gratuita por cupom 100%, feita direto pelo formulario publico) e
+// autocorrige qualquer drift (ex: cancelamento de uma inscricao ja confirmada).
+async function recalibrateConfirmedCounter(env, ctx) {
+  const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runAggregationQuery?key=${env.FIREBASE_API_KEY}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      structuredAggregationQuery: {
+        structuredQuery: {
+          from: [{ collectionId: "nightrun_registrations" }],
+          where: { fieldFilter: { field: { fieldPath: "paymentStatus" }, op: "EQUAL", value: { stringValue: "pago" } } }
+        },
+        aggregations: [{ alias: "total", count: {} }]
+      }
+    })
+  });
+  if (!res.ok) return;
+  const data = await res.json();
+  const trueCount = Number(data?.[0]?.result?.aggregateFields?.total?.integerValue || 0);
+
+  const counterDoc = await getFirestoreDocSafe(env, THOUSAND_COUNTER_DOC);
+  const storedCount = Number(counterDoc?.fields?.count?.integerValue || 0);
+
+  if (trueCount !== storedCount) {
+    console.log("[Thousand] Recalibrating counter", { storedCount, trueCount });
+    await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${THOUSAND_COUNTER_DOC}?key=${env.FIREBASE_API_KEY}&updateMask.fieldPaths=count`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { count: { integerValue: String(trueCount) } } })
+    });
+  }
+
+  if (trueCount >= THOUSAND_THRESHOLD) {
+    await maybeTriggerThousandBroadcast(env, ctx, trueCount);
+  }
+}
+
+// Lock via KV garante que so um disparo real aconteca, mesmo se o incremento (na hora da
+// confirmacao) e a recalibracao do cron detectarem a virada pra 1000 quase ao mesmo tempo.
+async function maybeTriggerThousandBroadcast(env, ctx, count) {
+  const lockKey = "thousand:broadcast:lock";
+  if (env.NIGHTRUN_STORAGE) {
+    const existing = await env.NIGHTRUN_STORAGE.get(lockKey);
+    if (existing) return;
+    await env.NIGHTRUN_STORAGE.put(lockKey, "sent", { expirationTtl: 30 * 86400 });
+  }
+
+  const broadcastDoc = await getFirestoreDocSafe(env, THOUSAND_BROADCAST_DOC);
+  if (broadcastDoc?.fields?.sent?.booleanValue === true) return;
+
+  console.log("[Thousand] Threshold reached, triggering real broadcast", { count });
+  await triggerThousandBroadcast(env, ctx, { test: false, count }).catch(error => {
+    console.error("[Thousand] Broadcast failed", error);
+  });
+}
+
+async function fetchConfirmedRosterForBroadcast(env) {
+  const [regsRes, modsRes, kitsRes] = await Promise.all([
+    fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery?key=${env.FIREBASE_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: "nightrun_registrations" }],
+          where: { fieldFilter: { field: { fieldPath: "paymentStatus" }, op: "EQUAL", value: { stringValue: "pago" } } }
+        }
+      })
+    }),
+    fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_modalidades?key=${env.FIREBASE_API_KEY}`),
+    fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_kits?key=${env.FIREBASE_API_KEY}`)
+  ]);
+  const regsData = await regsRes.json().catch(() => []);
+  const modsData = await modsRes.json().catch(() => ({}));
+  const kitsData = await kitsRes.json().catch(() => ({}));
+
+  const modalidadeNomeById = {};
+  (modsData.documents || []).forEach(d => {
+    modalidadeNomeById[d.name.split("/").pop()] = d.fields?.nome?.stringValue || "";
+  });
+  const kitNomeById = {};
+  (kitsData.documents || []).forEach(d => {
+    kitNomeById[d.name.split("/").pop()] = d.fields?.nome?.stringValue || "";
+  });
+
+  return (Array.isArray(regsData) ? regsData : [])
+    .filter(r => r.document)
+    .map(r => {
+      const f = r.document.fields || {};
+      const modalidadeId = f.modalidadeId?.stringValue || "";
+      const kitId = f.kit?.stringValue || "unico";
+      return {
+        nome: f.nome?.stringValue || "Sem nome",
+        modalidade: modalidadeNomeById[modalidadeId] || f.modalidadeNome?.stringValue || (f.categoria?.stringValue === "infantil" ? "Infantil" : "-"),
+        kit: kitNomeById[kitId] || "Kit Único",
+        telefone: f.telefone?.stringValue || "",
+        fotoUrl: f.fotoUrl?.stringValue || ""
+      };
+    })
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
+// Converte bytes pra base64 em pedacos (mais rapido e evita estourar limites de call stack
+// / string em buffers grandes, ao contrario de um loop char-a-char ingenuo ou spread direto).
+function bytesToBase64Chunked(bytes) {
+  const CHUNK = 8192;
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+// Baixa a foto original e gera uma MINIATURA pequena (renderizada via resvg) - fotos
+// enviadas por atleta podem ter varios MB (foto de celular), e embutir o arquivo original
+// em cada linha da tabela do PDF (dezenas de fotos por pagina) estoura a memoria do worker.
+// A miniatura fica com poucos KB, entao dezenas delas por pagina nao pesam quase nada.
+const ROSTER_PHOTO_THUMB_PX = 64;
+async function fetchRosterPhotoThumbnail(url) {
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      return null;
+    }
+    const contentType = res.headers.get("content-type") || "image/jpeg";
+    const buf = await res.arrayBuffer();
+    // Fotos de celular podem vir com varios MB - o resvg-wasm nao lida bem com strings/base64
+    // gigantes passadas pro WASM (mesmo RangeError do header grande). Acima desse tamanho,
+    // pula a miniatura (cai no circulo cinza) em vez de arriscar quebrar a pagina inteira.
+    const MAX_SOURCE_PHOTO_BYTES = 350_000;
+    if (buf.byteLength > MAX_SOURCE_PHOTO_BYTES) return null;
+    const originalBase64 = bytesToBase64Chunked(new Uint8Array(buf));
+    const svg = `<svg width="${ROSTER_PHOTO_THUMB_PX}" height="${ROSTER_PHOTO_THUMB_PX}" xmlns="http://www.w3.org/2000/svg">
+      <image x="0" y="0" width="${ROSTER_PHOTO_THUMB_PX}" height="${ROSTER_PHOTO_THUMB_PX}" href="data:${contentType};base64,${originalBase64}" preserveAspectRatio="xMidYMid slice"/>
+    </svg>`;
+    // .free() explicito nos dois e essencial aqui: isso roda uma vez por foto (ate ~1000x
+    // numa lista cheia) e o resvg-wasm nao libera a memoria WASM sozinho so por o objeto JS
+    // sair de escopo - sem isso, a memoria do WASM vaza e uma chamada mais adiante (mesmo
+    // bem menor) quebra com "Invalid array buffer length" por falta de memoria.
+    const resvg = new Resvg(svg, { fitTo: { mode: "width", value: ROSTER_PHOTO_THUMB_PX } });
+    const rendered = resvg.render();
+    const thumbPng = rendered.asPng();
+    rendered.free();
+    resvg.free();
+    return bytesToBase64Chunked(thumbPng);
+  } catch (error) {
+    console.warn("[Thousand] Falha ao gerar miniatura da foto", { url, error: error.message });
+    return null;
+  }
+}
+
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const current = idx++;
+      results[current] = await fn(items[current], current);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+// PDF com o mesmo estilo visual do PDF de kits (header.png, titulo em Montserrat bold navy,
+// tabela com linhas zebradas navy/branco) - so que com foto, modalidade, kit e telefone, pra
+// todos os confirmados, em ordem alfabetica. Cada pagina e desenhada como SVG (mesma tecnica
+// ja usada pro banner do resumo operacional) e renderizada pra PNG via resvg; as paginas PNG
+// viram um PDF unico via pdf-lib (worker nao tem DOM, entao nao da pra usar jsPDF+canvas como
+// no admin).
+async function generateConfirmedRosterPdf(env, roster, { test = false } = {}) {
+  await ensureResvgWasm();
+
+  const W = 992, H = 1403; // A4 a ~120dpi
+  const marginX = 48;
+
+  // Usa /header-pdf.png (versao ja reduzida pro tamanho real usado aqui, ~170KB) em vez do
+  // header.png original (~1.5MB) - o resvg-wasm nao aguenta bem strings/base64 gigantes
+  // passadas pra dentro do WASM (RangeError "Invalid array buffer length"), entao evitamos
+  // redimensionar a imagem grande dentro do worker e usamos uma ja pequena de origem.
+  const headerRes = await fetch("https://night-run-uba.web.app/header-pdf.png");
+  const headerBase64 = bytesToBase64Chunked(new Uint8Array(await headerRes.arrayBuffer()));
+
+  // Concorrencia baixa de proposito: o limite pratico de conexoes simultaneas de fetch()
+  // num Worker e ~6 - acima disso, respostas ficam paradas e o runtime cancela a mais antiga
+  // pra evitar deadlock, o que corrompe o corpo e quebra o arrayBuffer() de quem estava lendo.
+  const photosBase64 = await mapWithConcurrency(roster, 5, item => fetchRosterPhotoThumbnail(item.fotoUrl));
+  const headerH = W / (2172 / 724);
+  const rowH = 36;
+  const usableW = W - marginX * 2;
+  const colNome = marginX + 56;
+  const colModalidade = colNome + 300;
+  const colKit = colModalidade + 170;
+  const colTelefone = colKit + 150;
+  const tableHeaderY = headerH + 45;
+  const tableHeaderH = 26;
+  const rowsStartY = tableHeaderY + tableHeaderH + 8;
+  const rowsPerPage = Math.max(1, Math.floor((H - rowsStartY - 26) / rowH));
+  const pageCount = Math.max(1, Math.ceil(roster.length / rowsPerPage));
+
+  const NAVY = "#071A45";
+  const STRIPE = "#f1f5f9";
+
+  const pagesPng = [];
+  for (let page = 0; page < pageCount; page++) {
+    const start = page * rowsPerPage;
+    const items = roster.slice(start, start + rowsPerPage);
+    let rowsSvg = "";
+    let defsSvg = "";
+
+    items.forEach((item, i) => {
+      const idx = start + i;
+      const rowY = rowsStartY + i * rowH;
+      const stripe = idx % 2 === 1 ? `<rect x="${marginX}" y="${rowY}" width="${usableW}" height="${rowH}" fill="${STRIPE}"/>` : "";
+      const photo64 = photosBase64[idx];
+      const cy = rowY + rowH / 2;
+      let photoEl;
+      if (photo64) {
+        defsSvg += `<clipPath id="clip${idx}"><circle cx="${marginX + 18}" cy="${cy}" r="13"/></clipPath>`;
+        photoEl = `<image x="${marginX + 5}" y="${cy - 13}" width="26" height="26" href="data:image/png;base64,${photo64}" clip-path="url(#clip${idx})" preserveAspectRatio="xMidYMid slice"/>`;
+      } else {
+        photoEl = `<circle cx="${marginX + 18}" cy="${cy}" r="13" fill="#e2e8f0"/>`;
+      }
+      rowsSvg += `${stripe}${photoEl}
+        <text x="${colNome}" y="${cy + 5}" font-size="13" font-family="Montserrat" font-weight="800" fill="${NAVY}">${xmlEscape(item.nome.toUpperCase())}</text>
+        <text x="${colModalidade}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.modalidade)}</text>
+        <text x="${colKit}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.kit)}</text>
+        <text x="${colTelefone}" y="${cy + 5}" font-size="12" font-family="Montserrat" fill="${NAVY}">${xmlEscape(item.telefone)}</text>`;
+    });
+
+    const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+      <defs>${defsSvg}</defs>
+      <rect width="${W}" height="${H}" fill="#ffffff"/>
+      <image x="0" y="0" width="${W}" height="${headerH}" href="data:image/png;base64,${headerBase64}" preserveAspectRatio="xMidYMid slice"/>
+      <text x="${marginX}" y="${headerH + 30}" font-size="22" font-family="Montserrat" font-weight="800" fill="${NAVY}">${test ? "[TESTE] " : ""}1000 CONFIRMADOS — MCU NIGHT RUN 2026</text>
+      <rect x="${marginX}" y="${tableHeaderY}" width="${usableW}" height="${tableHeaderH}" fill="${NAVY}"/>
+      <text x="${colNome}" y="${tableHeaderY + 18}" font-size="11" font-family="Montserrat" font-weight="800" fill="#ffffff">NOME</text>
+      <text x="${colModalidade}" y="${tableHeaderY + 18}" font-size="11" font-family="Montserrat" font-weight="800" fill="#ffffff">MODALIDADE</text>
+      <text x="${colKit}" y="${tableHeaderY + 18}" font-size="11" font-family="Montserrat" font-weight="800" fill="#ffffff">KIT</text>
+      <text x="${colTelefone}" y="${tableHeaderY + 18}" font-size="11" font-family="Montserrat" font-weight="800" fill="#ffffff">TELEFONE</text>
+      ${rowsSvg}
+      <text x="${W - marginX}" y="${H - 14}" font-size="10" font-family="Montserrat" fill="#94a3b8" text-anchor="end">Página ${page + 1} de ${pageCount} · ${roster.length} confirmados</text>
+    </svg>`;
+
+    const resvg = new Resvg(svg, {
+      fitTo: { mode: "width", value: W },
+      font: { fontBuffers: [new Uint8Array(MONTSERRAT_TTF)], loadSystemFonts: false, defaultFontFamily: "Montserrat" }
+    });
+    const rendered = resvg.render();
+    pagesPng.push(rendered.asPng());
+    rendered.free();
+    resvg.free();
+  }
+
+  const pdfDoc = await PDFDocument.create();
+  for (const png of pagesPng) {
+    const img = await pdfDoc.embedPng(png);
+    const pdfPage = pdfDoc.addPage([W, H]);
+    pdfPage.drawImage(img, { x: 0, y: 0, width: W, height: H });
+  }
+  return pdfDoc.save();
+}
+
+// Banner horizontal festivo (logo + "PARABÉNS! 1000 CONFIRMADOS") pro header da mensagem
+// de WhatsApp do aviso automatico - mesma tecnica de renderizacao do banner operacional.
+async function generateThousandCelebrationBannerPng(env) {
+  await ensureResvgWasm();
+  const logoBase64 = await getOperationalLogoBase64(env);
+  const W = 1200, H = 630;
+  const dots = Array.from({ length: 26 }, (_, i) => {
+    const x = Math.round((i * 137) % W);
+    const y = Math.round((i * 71) % H);
+    const r = 3 + (i % 4);
+    const colors = ["#6BFF2A", "#ffffff", "#D4E926"];
+    return `<circle cx="${x}" cy="${y}" r="${r}" fill="${colors[i % colors.length]}" opacity="${0.15 + (i % 3) * 0.08}"/>`;
+  }).join("");
+
+  const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#071A45"/>
+        <stop offset="100%" stop-color="#0f2a6b"/>
+      </linearGradient>
+      <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#6BFF2A" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="#6BFF2A" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <rect width="${W}" height="${H}" fill="url(#bg)"/>
+    <ellipse cx="${W / 2}" cy="0" rx="${W * 0.6}" ry="260" fill="url(#glow)"/>
+    ${dots}
+    <path d="M -40 -40 Q 160 160 -10 420" stroke="#6BFF2A" stroke-width="3" fill="none" opacity="0.4"/>
+    <path d="M ${W + 40} ${H + 40} Q ${W - 160} ${H - 160} ${W + 10} ${H - 420}" stroke="#6BFF2A" stroke-width="3" fill="none" opacity="0.4"/>
+    <image x="${W / 2 - 150}" y="46" width="300" height="177" href="data:image/png;base64,${logoBase64}" preserveAspectRatio="xMidYMid meet"/>
+    <text x="${W / 2}" y="330" font-size="30" fill="#6BFF2A" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="3">SÃO 1000 CONFIRMADOS!</text>
+    <text x="${W / 2}" y="415" font-size="68" fill="#ffffff" text-anchor="middle" font-family="Montserrat" font-weight="800">PARABÉNS,</text>
+    <text x="${W / 2}" y="490" font-size="68" fill="#ffffff" text-anchor="middle" font-family="Montserrat" font-weight="800">MCU NIGHT RUN!</text>
+    <text x="${W / 2}" y="560" font-size="22" fill="#94a3b8" text-anchor="middle" font-family="Montserrat" font-weight="800" letter-spacing="1">A MAIOR CORRIDA NOTURNA DA REGIÃO</text>
+  </svg>`;
+
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: "width", value: W },
+    font: { fontBuffers: [new Uint8Array(MONTSERRAT_TTF)], loadSystemFonts: false, defaultFontFamily: "Montserrat" }
+  });
+  const rendered = resvg.render();
+  const png = rendered.asPng();
+  rendered.free();
+  resvg.free();
+  return png;
+}
+
+function pngBytesToBase64(pngBytes) {
+  return bytesToBase64Chunked(pngBytes instanceof Uint8Array ? pngBytes : new Uint8Array(pngBytes));
+}
+
+// Orquestra o disparo completo: gera banner + PDF, busca os numeros configurados em
+// nightrun_settings/thousand_broadcast e manda 2 mensagens pra cada um (banner com legenda,
+// depois o PDF). No modo teste, nao mexe no contador nem no flag "sent" - so envia.
+async function triggerThousandBroadcast(env, ctx, { test = false, count = null, dryRun = false } = {}) {
+  const broadcastDoc = await getFirestoreDocSafe(env, THOUSAND_BROADCAST_DOC);
+  const numbers = (broadcastDoc?.fields?.numbers?.arrayValue?.values || []).map(v => v.stringValue).filter(Boolean);
+
+  if (!dryRun && numbers.length === 0) {
+    console.warn("[Thousand] Nenhum numero configurado para o aviso.");
+    return { success: false, reason: "no_numbers_configured" };
+  }
+
+  const roster = await fetchConfirmedRosterForBroadcast(env);
+  const [bannerPng, pdfBytes] = await Promise.all([
+    generateThousandCelebrationBannerPng(env),
+    generateConfirmedRosterPdf(env, roster, { test })
+  ]);
+
+  // Modo dry: so verifica se a geracao do banner e do PDF funciona (util pra depurar sem
+  // precisar de um numero real configurado, ja que isso manda mensagem de verdade).
+  if (dryRun) {
+    return { success: true, dryRun: true, rosterCount: roster.length, bannerBytes: bannerPng.byteLength, pdfBytes: pdfBytes.byteLength };
+  }
+
+  const bannerBase64 = pngBytesToBase64(bannerPng);
+  const pdfBase64 = pngBytesToBase64(pdfBytes);
+
+  const caption = test
+    ? `[TESTE] 🎉 São 1000 confirmados na MCU Night Run 2026! (roster atual: ${roster.length} confirmados)`
+    : `🎉 São 1000 confirmados na MCU Night Run 2026! Segue em anexo a lista completa de atletas confirmados.`;
+
+  const results = [];
+  for (const phone of numbers) {
+    const bannerResult = await sendMessage({ phone, text: caption, imageUrl: `data:image/png;base64,${bannerBase64}` }, env).catch(error => ({ success: false, error: error.message }));
+    const pdfResult = await sendMessage({
+      phone,
+      text: `Lista de confirmados (${roster.length} atletas) — MCU Night Run 2026`,
+      documentBase64: pdfBase64,
+      documentMimeType: "application/pdf",
+      documentFileName: `${test ? "teste-" : ""}1000-confirmados-mcu-night-run.pdf`
+    }, env).catch(error => ({ success: false, error: error.message }));
+    results.push({ phone, bannerResult, pdfResult });
+  }
+
+  if (!test) {
+    await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${THOUSAND_BROADCAST_DOC}?key=${env.FIREBASE_API_KEY}&updateMask.fieldPaths=sent&updateMask.fieldPaths=sentAt&updateMask.fieldPaths=count`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: {
+          sent: { booleanValue: true },
+          sentAt: { timestampValue: new Date().toISOString() },
+          count: { integerValue: String(count || roster.length) }
+        }
+      })
+    });
+  }
+
+  return { success: true, test, rosterCount: roster.length, results };
 }
 
 async function throttleWhatsAppInstance(env, instanceName) {

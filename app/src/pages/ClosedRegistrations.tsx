@@ -3,9 +3,14 @@ import { CalendarClock, ClipboardList } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import PublicForm from './PublicForm';
+import { useThousandGuard } from '../hooks/useThousandGuard';
 import '../App.css';
 
 export default function ClosedRegistrations() {
+  // Se o limite de 1000 confirmados bater enquanto alguém está aqui (prestes a se inscrever
+  // ou vendo a tela de "em breve"), redireciona na hora pra Home, que mostra a tela de
+  // esgotado - garante que ninguém consiga abrir o formulário depois do corte.
+  useThousandGuard();
   const [bypassClosedScreen, setBypassClosedScreen] = useState(() => sessionStorage.getItem('nightrun:bypass-closed-screen') === 'true');
   const [registrationsClosed, setRegistrationsClosed] = useState(true);
   const [loadingSetting, setLoadingSetting] = useState(true);

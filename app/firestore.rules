@@ -14,6 +14,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Contador de confirmados pro limite de 1000 e a lista de numeros que recebem o aviso:
+    // o worker escreve nesses dois documentos via API publica (sem auth de admin, so a API
+    // key), entao precisam de escrita liberada - leitura publica so do contador (usado pelo
+    // redirecionamento ao vivo em qualquer tela publica), a lista de numeros so leitura admin.
+    match /nightrun_settings/confirmed_counter {
+      allow read, write: if true;
+    }
+    match /nightrun_settings/thousand_broadcast {
+      allow read, write: if true;
+    }
+
     // ConfiguraÃ§Ãµes de Sistema (ex: WhatsApp API): Apenas Admins
     match /system_settings/{document=**} {
       allow read, write: if isAdmin();

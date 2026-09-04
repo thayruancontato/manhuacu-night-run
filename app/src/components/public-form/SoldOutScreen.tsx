@@ -100,9 +100,6 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
             <span className="yellow-highlight">DA REGIÃO!</span>
           </h2>
           <div className="divider-yellow" style={{ margin: '10px auto' }} />
-          <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem', fontWeight: 500, margin: 0 }}>
-            Inscreva-se e garanta seu kit.
-          </p>
         </div>
 
         <div className="animate-fade-up delay-2 countdown-wrapper sold-out-card">
@@ -111,7 +108,6 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
           </div>
           <strong className="sold-out-count">{confirmedCount} INSCRITOS</strong>
           <strong className="sold-out-title">INSCRIÇÕES ESGOTADAS!</strong>
-          <p className="sold-out-subtitle">Todas as vagas foram preenchidas.</p>
 
           <div className="countdown-footer">
             <div>
@@ -125,7 +121,6 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
               <MoonStar size={23} />
               <span>
                 <small>A NOITE</small>
-                <strong>Mais energia, mais emocao!</strong>
               </span>
             </div>
           </div>

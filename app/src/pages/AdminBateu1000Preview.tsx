@@ -40,10 +40,10 @@ export default function AdminBateu1000Preview() {
   return (
     <div className="public-app-root public-home-root">
       <div style={{
-        background: '#0e0f14', color: '#facc15', textAlign: 'center', padding: '8px 16px',
-        fontSize: '0.8rem', fontWeight: 'bold', position: 'sticky', top: 0, zIndex: 9999,
+        background: '#0e0f14', color: '#facc15', textAlign: 'center', padding: '6px 16px',
+        fontSize: '0.7rem', fontWeight: 'bold', position: 'sticky', top: 0, zIndex: 9999,
       }}>
-        PRÉ-VISUALIZAÇÃO (admin) — tela real de "esgotado" só aparece com 1000+ confirmados. Confirmados atuais: {confirmedCount}
+        PRÉ-VISUALIZAÇÃO (admin)
       </div>
       <main className="public-main-content">
         <SoldOutScreen

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -87,25 +87,28 @@ export default function EnderecoAtleta() {
   useEffect(() => {
     (async () => {
       try {
-        const q = query(collection(db, 'nightrun_registrations'), where('paymentStatus', '==', 'pago'));
-        const snap = await getDocs(q);
-        const list = snap.docs.map(d => {
-          const data = d.data();
-          const nome = String(data.nome || '').trim();
+        // Endpoint cacheado do worker (KV) em vez de escanear a coleção inteira no Firestore
+        // a cada visita - essa página é pública, aberta por até 1000 pessoas, e cada leitura
+        // de documento é cobrada. Ver worker/src/index.js: getCachedConfirmedRoster().
+        const workerUrl = import.meta.env.VITE_WORKER_URL;
+        const res = await fetch(`${workerUrl}/roster/confirmed`);
+        const data = await res.json();
+        const list = (data.athletes || []).map((a: any) => {
+          const nome = String(a.nome || '').trim();
           return {
-            id: d.id,
+            id: a.id,
             nome,
-            cpf: onlyDigits(data.cpf || ''),
-            telefone: data.telefone || '',
-            sexo: data.sexo || '',
-            dataNascimento: data.dataNascimento,
-            euVouCardUrl: data.euVouCardUrl || '',
-            enderecoPreenchidoEm: data.enderecoPreenchidoEm || null,
-            endereco: data.endereco || undefined,
+            cpf: onlyDigits(a.cpf || ''),
+            telefone: a.telefone || '',
+            sexo: a.sexo || '',
+            dataNascimento: a.dataNascimento,
+            euVouCardUrl: a.euVouCardUrl || '',
+            enderecoPreenchidoEm: a.enderecoPreenchidoEm || null,
+            endereco: a.endereco || undefined,
             searchNome: normalizeText(nome),
           } as Atleta;
         });
-        list.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
+        list.sort((a: Atleta, b: Atleta) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
         setAtletas(list);
         setStep('buscar');
       } catch (e) {

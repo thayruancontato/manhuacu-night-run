@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, where } from 'firebase/firestore';
 import { AlertTriangle, ArrowLeft, CheckCircle2, MessageCircleQuestion, Search, User, Users, X } from 'lucide-react';
-import { db } from '../firebase';
 import { formatDateBR } from '../utils/dateUtils';
 import NaoEncontreiModal from '../components/public-form/NaoEncontreiModal';
 import '../App.css';
@@ -37,22 +35,26 @@ export default function AtletasConfirmados() {
   useEffect(() => {
     (async () => {
       try {
-        const q = query(collection(db, 'nightrun_registrations'), where('paymentStatus', '==', 'pago'));
-        const snap = await getDocs(q);
-        const list = snap.docs.map(d => {
-          const data = d.data();
-          const nome = String(data.nome || '').trim();
+        // Le do endpoint cacheado do worker (KV, atualizado a cada poucos minutos) em vez de
+        // escanear a coleção inteira no Firestore a cada visita - essa página é pública e
+        // pode ser aberta por até 1000 pessoas, então isso evita ~1000 leituras de documento
+        // (cobradas) por visita.
+        const workerUrl = import.meta.env.VITE_WORKER_URL;
+        const res = await fetch(`${workerUrl}/roster/confirmed`);
+        const data = await res.json();
+        const list = (data.athletes || []).map((a: any) => {
+          const nome = String(a.nome || '').trim();
           return {
-            id: d.id,
+            id: a.id,
             nome,
-            fotoUrl: data.fotoUrl || '',
-            dataInscricao: formatDateBR(data.createdAt, ''),
+            fotoUrl: a.fotoUrl || '',
+            dataInscricao: formatDateBR(a.createdAt, ''),
             searchNome: normalizeText(nome),
-            searchDigits: `${onlyDigits(data.telefone || '')} ${onlyDigits(data.cpf || '')}`,
-            enderecoPreenchido: Boolean(data.enderecoPreenchidoEm),
+            searchDigits: `${onlyDigits(a.telefone || '')} ${onlyDigits(a.cpf || '')}`,
+            enderecoPreenchido: Boolean(a.enderecoPreenchidoEm),
           };
         });
-        list.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
+        list.sort((a: AtletaConfirmado, b: AtletaConfirmado) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
         setAtletas(list);
       } catch (e) {
         console.error('Erro ao buscar atletas confirmados:', e);

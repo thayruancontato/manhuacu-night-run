@@ -890,6 +890,16 @@ export default {
         return json({ success: true, numbers });
       }
 
+      if (cleanPath === "/roster/confirmed" && request.method === "GET") {
+        // Cache no KV (nao Firestore) pra tirar o custo de ~1000 leituras de documento TODA
+        // VEZ que alguem abre /atletas ou /endereco - essas paginas publicas passaram a ler
+        // daqui em vez de escanear a colecao inteira direto no Firestore a cada visita. Ver
+        // getCachedConfirmedRoster() pra detalhes do porque isso importa pro custo.
+        const forceRefresh = url.searchParams.get("refresh") === "1";
+        const roster = await getCachedConfirmedRoster(env, { forceRefresh });
+        return json(roster);
+      }
+
       if (cleanPath === "/thousand/banner-preview" && request.method === "GET") {
         const roster = await fetchConfirmedRosterForBroadcast(env);
         const png = await generateThousandCelebrationBannerPng(env, roster);
@@ -3222,6 +3232,17 @@ async function bumpConfirmedCounterAndMaybeBroadcast(env, ctx) {
 // acima (ex: inscricao gratuita por cupom 100%, feita direto pelo formulario publico) e
 // autocorrige qualquer drift (ex: cancelamento de uma inscricao ja confirmada).
 async function recalibrateConfirmedCounter(env, ctx) {
+  // Depois que o aviso de 1000 ja foi disparado de verdade, essa recalibracao vira so uma
+  // rede de seguranca contra drift (ex: cancelamento de uma inscricao ja confirmada) - nao
+  // precisa mais rodar toda vez que o cron ticka (1x/minuto = 1440 agregacoes/dia, pra sempre,
+  // cobradas pelo Firestore mesmo sem nada de novo acontecendo). Uma checagem no KV (gratuita,
+  // nao e cobrada pelo Firestore) decide se vale a pena gastar a consulta de agregacao nesse
+  // tick: so roda a cada 30 minutos depois do disparo, continua todo minuto antes dele.
+  if (env.NIGHTRUN_STORAGE) {
+    const alreadySent = await env.NIGHTRUN_STORAGE.get("thousand:broadcast:lock");
+    if (alreadySent && new Date().getMinutes() % 30 !== 0) return;
+  }
+
   const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runAggregationQuery?key=${env.FIREBASE_API_KEY}`;
   const res = await fetch(url, {
     method: "POST",
@@ -3280,6 +3301,69 @@ async function maybeTriggerThousandBroadcast(env, ctx, count) {
     // "sent" ainda false no Firestore. Assim o proximo tick do cron tenta de novo.
     if (env.NIGHTRUN_STORAGE) await env.NIGHTRUN_STORAGE.delete(lockKey).catch(() => {});
   }
+}
+
+const ROSTER_CACHE_KEY = "roster:confirmed:cache:v1";
+const ROSTER_CACHE_TTL_SECONDS = 180; // 3 minutos
+
+// As paginas publicas /atletas e /endereco precisam da lista de confirmados (nome, foto,
+// cpf, telefone, status de endereco) pra buscar/selecionar o atleta. Antes, cada uma fazia
+// sua PROPRIA consulta direto no Firestore - toda visita de qualquer pessoa lia os ~1000
+// documentos da colecao inteira, e o Firestore cobra por leitura de documento. Com o evento
+// divulgado publicamente, isso escala com o numero de visitantes, nao um numero fixo por dia.
+// Esse cache guarda o resultado pronto no KV do Cloudflare (que nao e cobrado pelo Firestore)
+// por alguns minutos - a var enorme maioria das visitas passa a custar 1 leitura de KV em vez
+// de ~1000 leituras de Firestore.
+async function getCachedConfirmedRoster(env, { forceRefresh = false } = {}) {
+  if (!forceRefresh && env.NIGHTRUN_STORAGE) {
+    const cached = await env.NIGHTRUN_STORAGE.get(ROSTER_CACHE_KEY);
+    if (cached) {
+      try { return JSON.parse(cached); } catch { /* cache corrompido, recalcula abaixo */ }
+    }
+  }
+
+  const res = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery?key=${env.FIREBASE_API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: "nightrun_registrations" }],
+        where: { fieldFilter: { field: { fieldPath: "paymentStatus" }, op: "EQUAL", value: { stringValue: "pago" } } }
+      }
+    })
+  });
+  const regsData = await res.json().catch(() => []);
+
+  const athletes = (Array.isArray(regsData) ? regsData : [])
+    .filter(r => r.document)
+    .map(r => {
+      const f = r.document.fields || {};
+      const nome = f.nome?.stringValue || "Sem nome";
+      return {
+        id: r.document.name.split("/").pop(),
+        nome,
+        cpf: (f.cpf?.stringValue || "").replace(/\D/g, ""),
+        telefone: f.telefone?.stringValue || "",
+        sexo: f.sexo?.stringValue || "",
+        dataNascimento: f.dataNascimento?.stringValue || f.dataNascimento?.timestampValue || null,
+        fotoUrl: f.fotoUrl?.stringValue || "",
+        euVouCardUrl: f.euVouCardUrl?.stringValue || "",
+        createdAt: f.createdAt?.timestampValue || null,
+        enderecoPreenchidoEm: f.enderecoPreenchidoEm?.timestampValue || null,
+        endereco: f.endereco?.mapValue?.fields
+          ? Object.fromEntries(Object.entries(f.endereco.mapValue.fields).map(([k, v]) => [k, v.stringValue ?? v.booleanValue ?? ""]))
+          : null
+      };
+    })
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+  const payload = { generatedAt: new Date().toISOString(), count: athletes.length, athletes };
+
+  if (env.NIGHTRUN_STORAGE) {
+    await env.NIGHTRUN_STORAGE.put(ROSTER_CACHE_KEY, JSON.stringify(payload), { expirationTtl: ROSTER_CACHE_TTL_SECONDS });
+  }
+
+  return payload;
 }
 
 async function fetchConfirmedRosterForBroadcast(env) {

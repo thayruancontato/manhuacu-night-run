@@ -3,6 +3,7 @@ import { CustomDialogProvider } from './context/CustomDialogContext';
 import { LoadingProvider } from './components/LoadingService';
 import { AuthProvider } from './context/AuthContext';
 import ClosedRegistrations from './pages/ClosedRegistrations';
+import PublicForm from './pages/PublicForm';
 import Home from './pages/Home';
 import AtletasConfirmados from './pages/AtletasConfirmados';
 import EnderecoAtleta from './pages/EnderecoAtleta';
@@ -73,6 +74,10 @@ function App() {
               <Route path="/endereco" element={<EnderecoAtleta />} />
               <Route path="/regulamento" element={<Regulamento />} />
               <Route path="/inscricao" element={<ClosedRegistrations />} />
+              {/* Link secreto: mesma pagina de inscricao (PublicForm), direto, sem passar pela
+                  checagem de "inscricoes fechadas" nem pelo redirecionamento automatico dos
+                  1000 confirmados - uso interno/administrativo pontual, nao divulgar. */}
+              <Route path="/inscricao-vip-504dacf23c94" element={<PublicForm />} />
               <Route path="/inscricao/pagamento/:registrationId" element={<PaymentPage />} />
               <Route path="/inscricao/confirmada/:registrationId" element={<SuccessPaymentPage />} />
               <Route path="/sorteio/:sorteioId" element={<SorteioPublico />} />

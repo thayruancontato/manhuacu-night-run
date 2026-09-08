@@ -176,6 +176,22 @@ export default function AtletaDashboard() {
           .catch(reject);
       });
 
+      // Foto do atleta é opcional (nem toda inscrição tem fotoUrl) - se falhar ao buscar,
+      // segue sem foto em vez de travar a geração do comprovante inteiro.
+      const fotoBase64: string | null = reg.fotoUrl
+        ? await new Promise<string | null>(resolve => {
+            fetch(reg.fotoUrl)
+              .then(res => res.blob())
+              .then(blob => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(String(reader.result || '') || null);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(blob);
+              })
+              .catch(() => resolve(null));
+          })
+        : null;
+
       const titleFont = new FontFace('Anton', 'url(/fonts/Anton-Regular.ttf)');
       await titleFont.load();
       (document as any).fonts.add(titleFont);
@@ -220,6 +236,21 @@ export default function AtletaDashboard() {
       let y = headerH + 11;
       docPdf.addImage(titleImgData, 'PNG', marginX, y - titleImgH + 2, titleImgW, titleImgH, undefined, 'FAST');
       y += 5;
+
+      if (fotoBase64) {
+        try {
+          const photoSize = 22;
+          const photoX = pageW - marginX - photoSize;
+          const photoY = headerH + 3;
+          const photoFormat = fotoBase64.includes('image/png') ? 'PNG' : 'JPEG';
+          docPdf.addImage(fotoBase64, photoFormat, photoX, photoY, photoSize, photoSize, 'comprovante-foto', 'FAST');
+          docPdf.setDrawColor(...NAVY);
+          docPdf.setLineWidth(0.6);
+          docPdf.rect(photoX, photoY, photoSize, photoSize, 'D');
+        } catch (e) {
+          console.error('Erro ao inserir foto no comprovante:', e);
+        }
+      }
 
       docPdf.setFont('helvetica', 'italic');
       docPdf.setFontSize(9);
@@ -366,18 +397,22 @@ export default function AtletaDashboard() {
   };
 
   return (
-    <div style={{ animation: 'fadeIn .4s ease-out' }}>
-      {/* Comprovante de inscrição */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+    <div style={{ animation: 'fadeIn .4s ease-out', paddingBottom: 76 }}>
+      {/* Comprovante de inscrição - fixo no rodapé da tela, centralizado */}
+      <div style={{
+        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 60,
+        display: 'flex', justifyContent: 'center', padding: '14px 20px',
+        background: 'linear-gradient(to top, #f8fafc 60%, rgba(248,250,252,0))',
+      }}>
         <button
           type="button"
           onClick={handleDownloadComprovante}
           disabled={gerandoComprovante}
           style={{
             background: '#071A45', color: '#fff', border: '1px solid rgba(107,255,42,0.5)',
-            borderRadius: 12, padding: '12px 20px', fontSize: '0.85rem', fontWeight: 800,
+            borderRadius: 40, padding: '14px 28px', fontSize: '0.85rem', fontWeight: 800,
             display: 'flex', alignItems: 'center', gap: 8, cursor: gerandoComprovante ? 'wait' : 'pointer',
-            boxShadow: '0 4px 14px rgba(7,26,69,0.18)', opacity: gerandoComprovante ? 0.7 : 1,
+            boxShadow: '0 8px 24px rgba(7,26,69,0.28)', opacity: gerandoComprovante ? 0.7 : 1,
           }}
         >
           <Download size={16} color="#6BFF2A" />

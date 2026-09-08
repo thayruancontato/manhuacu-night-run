@@ -1,7 +1,8 @@
 import {
   Users, DollarSign, BarChart2, Settings, Package,
   MessageSquare, Image as ImageIcon, Download, Home, Shirt, ShieldCheck, Gift,
-  Flag, ClipboardList, Building2, Power, SearchCheck, BadgePercent, UsersRound, UserSearch, MapPin
+  Flag, ClipboardList, Building2, Power, SearchCheck, BadgePercent, UsersRound, UserSearch, MapPin,
+  FileText
 } from 'lucide-react';
 
 export interface MenuItem {
@@ -33,6 +34,7 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
   { path: '/admin/card-euvou', label: 'CARD #EUVOU', icon: ImageIcon },
   { path: '/admin/verificacoes-manuais', label: 'Verificações Manuais', icon: UserSearch },
   { path: '/admin/enderecos', label: 'Endereços', icon: MapPin },
+  { path: '/admin/comprovante-exemplo', label: 'Comprovante de Inscrição', icon: FileText },
   { path: '/admin/sorteios', label: 'Sorteio Surpresa', icon: Gift },
   { path: '/admin/whatsapp', label: 'WhatsApp', icon: MessageSquare },
   { path: '/admin/integracoes', label: 'Integrações', icon: Building2 },

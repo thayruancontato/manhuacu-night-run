@@ -2882,6 +2882,14 @@ async function confirmRegistrationDocument(env, document, ctx, options = {}) {
   if (!alreadyPaid) {
     const maskFields = ["paymentStatus"];
     const patchFields = { paymentStatus: { stringValue: "pago" } };
+    // Numero de inscricao (8 digitos, sorteado) exibido com destaque no acesso do atleta -
+    // gerado so na primeira confirmacao de cada registro (chance de colisao com ~1000
+    // inscritos num espaco de 100 milhoes de numeros e desprezivel, sem precisar de uma
+    // consulta extra por confirmacao so pra checar unicidade).
+    if (!fields.numeroInscricao?.stringValue) {
+      maskFields.push("numeroInscricao");
+      patchFields.numeroInscricao = { stringValue: String(Math.floor(10000000 + Math.random() * 90000000)) };
+    }
     if (options.manual) {
       maskFields.push("updatedAt", "manualPaymentConfirmedAt");
       const now = new Date().toISOString();

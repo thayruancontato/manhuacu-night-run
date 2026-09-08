@@ -221,6 +221,25 @@ export default function AtletaDashboard() {
         </div>
       </div>
 
+      {reg.numeroInscricao && (
+        <div style={{
+          background: 'linear-gradient(135deg, #071A45 0%, #0d2a66 100%)',
+          borderRadius: 16, padding: '20px 26px', marginBottom: 24,
+          border: '1px solid rgba(107,255,42,0.5)', boxShadow: '0 8px 24px rgba(7,26,69,0.24)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
+        }}>
+          <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.75rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1 }}>
+            Número da sua inscrição
+          </div>
+          <div style={{
+            color: '#6BFF2A', fontSize: '2.1rem', fontWeight: 900, letterSpacing: 4,
+            fontFamily: 'monospace', textShadow: '0 0 20px rgba(107,255,42,0.5)',
+          }}>
+            {reg.numeroInscricao}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 400px), 1fr))', gap: 24, justifyContent: 'center' }}>
         {/* Lado Esquerdo: Identificação & Kit */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24, width: '100%' }}>

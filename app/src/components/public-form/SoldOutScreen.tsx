@@ -148,6 +148,32 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
           </button>
         </div>
 
+        <div className="animate-fade-up delay-3" style={{ width: '100%', marginTop: '12px' }}>
+          <button
+            type="button"
+            onClick={() => navigate('/atleta/login')}
+            style={{
+              background: 'rgba(255, 255, 255, 0.06)',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              borderRadius: '40px',
+              color: '#fff',
+              width: '100%',
+              height: '50px',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+            }}
+          >
+            Acompanhar minha inscrição
+          </button>
+        </div>
+
         <button type="button" className="endereco-ver-lista-link" onClick={onViewList}>
           Ver lista de atletas inscritos
           <ArrowRight size={16} />

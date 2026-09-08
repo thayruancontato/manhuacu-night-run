@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { jsPDF } from 'jspdf';
 import { db } from '../firebase';
-import { CreditCard, ExternalLink, Flag, Link2, MapPin, Package, Trophy, Users } from 'lucide-react';
+import { CreditCard, Download, ExternalLink, Flag, Link2, MapPin, Package, Trophy, Users } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
@@ -20,6 +21,7 @@ export default function AtletaDashboard() {
   const [modalidade, setModalidade] = useState<any | null>(null);
   const [vinculados, setVinculados] = useState<any[]>([]);
   const [kitsCadastrados, setKitsCadastrados] = useState<KitRecord[]>([]);
+  const [gerandoComprovante, setGerandoComprovante] = useState(false);
 
   useEffect(() => {
     fetchKits().then(setKitsCadastrados).catch(e => console.error('Erro ao carregar kits', e));
@@ -150,8 +152,200 @@ export default function AtletaDashboard() {
     window.location.reload();
   };
 
+  // Comprovante de inscrição em PDF - mesmo padrão visual (header.png, navy/stripe, título
+  // em Anton skewed) do relatório de confirmados por kit em AdminKits.tsx, pra manter a
+  // identidade visual consistente em todos os PDFs do sistema.
+  const handleDownloadComprovante = async () => {
+    setGerandoComprovante(true);
+    try {
+      const eventoSnap = await getDoc(doc(db, 'nightrun_settings', 'evento'));
+      const eventDateRaw = eventoSnap.exists() ? eventoSnap.data().eventDate : '';
+      const eventDateFmt = eventDateRaw
+        ? new Date(eventDateRaw).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        : '';
+
+      const headerBase64: string = await new Promise((resolve, reject) => {
+        fetch(`/header.png?v=${Date.now()}`, { cache: 'no-store' })
+          .then(res => res.blob())
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Falha ao carregar header.png'));
+            reader.readAsDataURL(blob);
+          })
+          .catch(reject);
+      });
+
+      const titleFont = new FontFace('Anton', 'url(/fonts/Anton-Regular.ttf)');
+      await titleFont.load();
+      (document as any).fonts.add(titleFont);
+      const titleText = 'COMPROVANTE DE INSCRIÇÃO';
+      const titleCanvas = document.createElement('canvas');
+      const titleCtx = titleCanvas.getContext('2d')!;
+      titleCtx.font = '90px Anton';
+      const titleSkew = 0.22;
+      const titlePadding = 24;
+      const titleTextW = titleCtx.measureText(titleText).width;
+      titleCanvas.width = titleTextW + titleSkew * 100 + titlePadding * 2;
+      titleCanvas.height = 130;
+      titleCtx.font = '90px Anton';
+      titleCtx.setTransform(1, 0, -titleSkew, 1, titlePadding, 92);
+      titleCtx.fillStyle = 'rgb(7, 26, 69)';
+      titleCtx.textBaseline = 'alphabetic';
+      titleCtx.fillText(titleText, 0, 0);
+      const titleImgData = titleCanvas.toDataURL('image/png');
+      const titleImgAspect = titleCanvas.width / titleCanvas.height;
+      const titleImgH = 10;
+      const titleImgW = titleImgH * titleImgAspect;
+
+      const docPdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageW = docPdf.internal.pageSize.getWidth();
+      const marginX = 16;
+      const headerAspect = 2172 / 724;
+      const headerW = pageW;
+      const headerH = headerW / headerAspect;
+      const usableW = pageW - marginX * 2;
+      const NAVY: [number, number, number] = [7, 26, 69];
+      const STRIPE: [number, number, number] = [241, 245, 249];
+      const GREEN: [number, number, number] = [107, 255, 42];
+
+      try {
+        docPdf.addImage(headerBase64, 'PNG', 0, 0, headerW, headerH, 'comprovante-header', 'FAST');
+      } catch {
+        docPdf.setFillColor(...NAVY);
+        docPdf.rect(0, 0, pageW, headerH, 'F');
+      }
+
+      let y = headerH + 11;
+      docPdf.addImage(titleImgData, 'PNG', marginX, y - titleImgH + 2, titleImgW, titleImgH, undefined, 'FAST');
+      y += 5;
+
+      docPdf.setFont('helvetica', 'italic');
+      docPdf.setFontSize(9);
+      docPdf.setTextColor(100, 116, 139);
+      docPdf.text(`MCU Night Run 2026${eventDateFmt ? ` · ${eventDateFmt}` : ''} · Manhuaçu/MG`, marginX, y);
+      y += 9;
+
+      if (reg.numeroInscricao) {
+        docPdf.setFillColor(...NAVY);
+        docPdf.roundedRect(marginX, y, usableW, 20, 3, 3, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8);
+        docPdf.setTextColor(255, 255, 255);
+        docPdf.text('NÚMERO DA INSCRIÇÃO', marginX + 6, y + 7.5);
+        docPdf.setFont('courier', 'bold');
+        docPdf.setFontSize(17);
+        docPdf.setTextColor(...GREEN);
+        docPdf.text(String(reg.numeroInscricao), marginX + 6, y + 16);
+
+        const statusText = isPago ? 'PAGAMENTO CONFIRMADO' : 'AGUARDANDO PAGAMENTO';
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8.5);
+        const statusW = docPdf.getTextWidth(statusText);
+        docPdf.setTextColor(255, 255, 255);
+        docPdf.text(statusText, marginX + usableW - statusW - 6, y + 11.5);
+        y += 20 + 8;
+      }
+
+      const drawSection = (title: string, rows: [string, any][]) => {
+        const visibleRows = rows.filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
+        if (visibleRows.length === 0) return;
+
+        docPdf.setFillColor(...NAVY);
+        docPdf.rect(marginX, y, usableW, 8, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(9);
+        docPdf.setTextColor(255, 255, 255);
+        docPdf.text(title, marginX + 3, y + 5.6);
+        y += 8;
+
+        visibleRows.forEach(([label, value], idx) => {
+          const rowH = 7.2;
+          if (idx % 2 === 1) {
+            docPdf.setFillColor(...STRIPE);
+            docPdf.rect(marginX, y, usableW, rowH, 'F');
+          }
+          docPdf.setFont('helvetica', 'bold');
+          docPdf.setFontSize(8);
+          docPdf.setTextColor(100, 116, 139);
+          docPdf.text(label.toUpperCase(), marginX + 3, y + 4.8);
+          docPdf.setFont('helvetica', 'normal');
+          docPdf.setFontSize(9.5);
+          docPdf.setTextColor(...NAVY);
+          docPdf.text(String(value), marginX + 68, y + 4.8);
+          y += rowH;
+        });
+        y += 6;
+      };
+
+      drawSection('DADOS DO ATLETA', [
+        ['Nome completo', reg.nome],
+        ['CPF', reg.cpf],
+        ['Data de nascimento', formatDate(reg.dataNascimento, true)],
+        ['Sexo', reg.sexo === 'M' ? 'Masculino' : 'Feminino'],
+        ['WhatsApp', reg.telefone],
+        ['E-mail', reg.email],
+      ]);
+
+      drawSection('PROVA & KIT', [
+        ['Modalidade', modalidade?.nome],
+        ['Distância', modalidade?.distancia],
+        ['Categoria', reg.categoria === 'infantil' ? 'Infantil' : 'Adulto / adolescente'],
+        ['Kit', kitNomeAtual],
+        ['Tamanho da camiseta', camisetaLabel || reg.tamanhoCamiseta],
+        ['Equipe', reg.integranteEquipe === 'sim' ? (reg.equipeNome || 'Sim') : 'Não'],
+      ]);
+
+      drawSection('INSCRIÇÃO & PAGAMENTO', [
+        ['Data da inscrição', formatDate(reg.createdAt, true)],
+        ['Valor pago', formatMoneyBR(reg.amount)],
+        ['Status', isPago ? 'Confirmado' : (reg.paymentStatus === 'vencido' ? 'Vencido' : 'Aguardando pagamento')],
+      ]);
+
+      if (reg.endereco?.cidade) {
+        drawSection('ENDEREÇO', [
+          ['Cidade / UF', `${reg.endereco.cidade} / ${reg.endereco.uf || ''}`],
+          ['Bairro', reg.endereco.bairro],
+          ['Rua', reg.endereco.rua ? `${reg.endereco.rua}${reg.endereco.numero ? `, ${reg.endereco.numero}` : ''}` : ''],
+          ['CEP', reg.endereco.cep],
+        ]);
+      }
+
+      docPdf.setFont('helvetica', 'italic');
+      docPdf.setFontSize(7.5);
+      docPdf.setTextColor(148, 163, 184);
+      docPdf.text('Documento gerado automaticamente pelo sistema MCU Night Run. Válido como comprovante de inscrição no evento.', marginX, 283);
+      docPdf.text(`Emitido em ${new Date().toLocaleString('pt-BR')}`, marginX, 287);
+
+      docPdf.save(`comprovante-inscricao-${String(reg.nome || 'atleta').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-')}.pdf`);
+    } catch (e) {
+      console.error(e);
+      alert('Erro ao gerar o comprovante. Tente novamente.');
+    } finally {
+      setGerandoComprovante(false);
+    }
+  };
+
   return (
     <div style={{ animation: 'fadeIn .4s ease-out' }}>
+      {/* Comprovante de inscrição */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <button
+          type="button"
+          onClick={handleDownloadComprovante}
+          disabled={gerandoComprovante}
+          style={{
+            background: '#071A45', color: '#fff', border: '1px solid rgba(107,255,42,0.5)',
+            borderRadius: 12, padding: '12px 20px', fontSize: '0.85rem', fontWeight: 800,
+            display: 'flex', alignItems: 'center', gap: 8, cursor: gerandoComprovante ? 'wait' : 'pointer',
+            boxShadow: '0 4px 14px rgba(7,26,69,0.18)', opacity: gerandoComprovante ? 0.7 : 1,
+          }}
+        >
+          <Download size={16} color="#6BFF2A" />
+          {gerandoComprovante ? 'GERANDO...' : 'BAIXAR COMPROVANTE DE INSCRIÇÃO'}
+        </button>
+      </div>
+
       {/* Sorteios ganhos por este atleta */}
       {sorteiosGanhos.map(sorteio => (
         <div

@@ -119,16 +119,6 @@ export default function AtletaLayout() {
               <MapPin size={20} />
               Preencher endereço agora
             </button>
-            <button
-              type="button"
-              onClick={() => setShowEnderecoModal(false)}
-              style={{
-                background: 'transparent', border: 'none', color: '#94a3b8',
-                fontSize: '0.8rem', marginTop: 14, cursor: 'pointer', textDecoration: 'underline',
-              }}
-            >
-              Preencher depois
-            </button>
           </div>
         </div>
       )}

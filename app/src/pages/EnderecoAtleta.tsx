@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -69,6 +69,7 @@ export default function EnderecoAtleta() {
   const [step, setStep] = useState<Step>('carregando');
   const [atletas, setAtletas] = useState<Atleta[]>([]);
   const [loadError, setLoadError] = useState(false);
+  const [modoDireto, setModoDireto] = useState(false);
 
   const [search, setSearch] = useState('');
   const [selecionado, setSelecionado] = useState<Atleta | null>(null);
@@ -86,6 +87,44 @@ export default function EnderecoAtleta() {
 
   useEffect(() => {
     (async () => {
+      // Se o atleta já está logado (acesso do atleta o identifica), o sistema já sabe quem
+      // ele é - vai direto pro formulário, sem pedir pra buscar o nome na lista nem
+      // confirmar CPF de novo (essas duas etapas existem só pra visitante não-logado).
+      const regId = localStorage.getItem('nightrun_atleta_reg_id');
+      if (regId) {
+        try {
+          const snap = await getDoc(doc(db, 'nightrun_registrations', regId));
+          if (snap.exists()) {
+            const data = snap.data();
+            const atleta: Atleta = {
+              id: snap.id,
+              nome: String(data.nome || '').trim(),
+              cpf: onlyDigits(data.cpf || ''),
+              telefone: data.telefone || '',
+              sexo: data.sexo || '',
+              dataNascimento: data.dataNascimento,
+              euVouCardUrl: data.euVouCardUrl || '',
+              enderecoPreenchidoEm: data.enderecoPreenchidoEm || null,
+              endereco: data.endereco || undefined,
+              searchNome: normalizeText(String(data.nome || '')),
+            };
+            setSelecionado(atleta);
+            setModoDireto(true);
+            if (atleta.enderecoPreenchidoEm) {
+              setModoEdicao(true);
+              setEndereco({ ...EMPTY_ENDERECO, ...atleta.endereco });
+            } else {
+              setModoEdicao(false);
+              setEndereco({ ...EMPTY_ENDERECO, ...atleta.endereco });
+            }
+            setStep('formulario');
+            return;
+          }
+        } catch (e) {
+          console.error('Erro ao carregar inscrição do atleta logado:', e);
+        }
+      }
+
       try {
         // Endpoint cacheado do worker (KV) em vez de escanear a coleção inteira no Firestore
         // a cada visita - essa página é pública, aberta por até 1000 pessoas, e cada leitura
@@ -310,7 +349,7 @@ export default function EnderecoAtleta() {
         <button
           type="button"
           className="endereco-back"
-          onClick={() => (step === 'buscar' ? navigate('/') : voltarParaBusca())}
+          onClick={() => (modoDireto ? navigate('/atleta/dashboard') : (step === 'buscar' ? navigate('/') : voltarParaBusca()))}
           aria-label="Voltar"
         >
           <ArrowLeft size={20} />
@@ -321,7 +360,7 @@ export default function EnderecoAtleta() {
         </div>
       </div>
 
-      {step !== 'sucesso' && (
+      {step !== 'sucesso' && !modoDireto && (
         <div className="endereco-progress" role="progressbar" aria-valuenow={progresso} aria-valuemin={1} aria-valuemax={3}>
           {[1, 2, 3].map(n => (
             <div key={n} className={`endereco-progress-dot ${progresso >= n ? 'active' : ''}`} />
@@ -543,8 +582,12 @@ export default function EnderecoAtleta() {
           <div className="endereco-step-icon success"><CheckCircle2 size={32} /></div>
           <h2>Endereço confirmado!</h2>
           <p>Enviamos sua ficha completa com o endereço no seu WhatsApp.</p>
-          <button type="button" className="btn-start with-glow endereco-btn-primary" onClick={() => navigate('/')}>
-            <Home size={18} /> Voltar ao início
+          <button
+            type="button"
+            className="btn-start with-glow endereco-btn-primary"
+            onClick={() => navigate(modoDireto ? '/atleta/dashboard' : '/')}
+          >
+            <Home size={18} /> {modoDireto ? 'Voltar à minha inscrição' : 'Voltar ao início'}
           </button>
         </div>
       )}

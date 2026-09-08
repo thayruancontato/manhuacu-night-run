@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
 import { jsPDF } from 'jspdf';
 import { db } from '../firebase';
-import { CreditCard, Download, ExternalLink, Flag, Link2, MapPin, Package, Trophy, Users } from 'lucide-react';
+import { CreditCard, Download, ExternalLink, Flag, Link2, MapPin, Package, Repeat, Trophy, Users } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
@@ -247,6 +247,20 @@ export default function AtletaDashboard() {
         y += 20 + 8;
       }
 
+      if (reg.titularidadeRecebida) {
+        const noticeText = `TITULARIDADE TRANSFERIDA: esta inscrição pertencia originalmente a ${reg.titularidadeRecebidaDeNome || 'outro atleta'} e foi repassada para o atleta abaixo.`;
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8);
+        const noticeLines = docPdf.splitTextToSize(noticeText, usableW - 12);
+        const noticeH = noticeLines.length * 4 + 6;
+        docPdf.setFillColor(255, 251, 235);
+        docPdf.setDrawColor(252, 211, 77);
+        docPdf.roundedRect(marginX, y, usableW, noticeH, 2, 2, 'FD');
+        docPdf.setTextColor(146, 64, 14);
+        docPdf.text(noticeLines, marginX + 6, y + 5);
+        y += noticeH + 8;
+      }
+
       const drawSection = (title: string, rows: [string, any][]) => {
         const visibleRows = rows.filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
         if (visibleRows.length === 0) return;
@@ -431,6 +445,18 @@ export default function AtletaDashboard() {
           }}>
             {reg.numeroInscricao}
           </div>
+        </div>
+      )}
+
+      {reg.titularidadeRecebida && (
+        <div style={{
+          background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12,
+          padding: '12px 18px', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <Repeat size={16} color="#92400e" />
+          <span style={{ fontSize: '0.8rem', color: '#92400e', fontWeight: 700 }}>
+            Titularidade recebida de <strong>{reg.titularidadeRecebidaDeNome || 'outro atleta'}</strong>
+          </span>
         </div>
       )}
 

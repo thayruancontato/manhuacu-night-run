@@ -200,6 +200,7 @@ export default function AtletaDashboard() {
 
       const docPdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
       const pageW = docPdf.internal.pageSize.getWidth();
+      const pageH = docPdf.internal.pageSize.getHeight();
       const marginX = 16;
       const headerAspect = 2172 / 724;
       const headerW = pageW;
@@ -261,35 +262,58 @@ export default function AtletaDashboard() {
         y += noticeH + 8;
       }
 
+      // Duas colunas lado a lado por linha (label em cima, valor embaixo, quebrando linha
+      // se precisar) - em vez de uma coluna só - pra caber tudo numa única página sem
+      // nunca cortar texto, não importa quantos campos a inscrição tenha.
+      const colGap = 6;
+      const colW = (usableW - colGap) / 2;
+      const col2X = marginX + colW + colGap;
+      const valueLineH = 4.1;
+
       const drawSection = (title: string, rows: [string, any][]) => {
         const visibleRows = rows.filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
         if (visibleRows.length === 0) return;
 
         docPdf.setFillColor(...NAVY);
-        docPdf.rect(marginX, y, usableW, 8, 'F');
+        docPdf.rect(marginX, y, usableW, 7, 'F');
         docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(9);
+        docPdf.setFontSize(8.5);
         docPdf.setTextColor(255, 255, 255);
-        docPdf.text(title, marginX + 3, y + 5.6);
-        y += 8;
+        docPdf.text(title, marginX + 3, y + 4.9);
+        y += 7;
 
-        visibleRows.forEach(([label, value], idx) => {
-          const rowH = 7.2;
-          if (idx % 2 === 1) {
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(9);
+        for (let i = 0; i < visibleRows.length; i += 2) {
+          const left = visibleRows[i];
+          const right = visibleRows[i + 1];
+          const leftLines = docPdf.splitTextToSize(String(left[1]), colW - 4);
+          const rightLines = right ? docPdf.splitTextToSize(String(right[1]), colW - 4) : [];
+          const lineCount = Math.max(leftLines.length, rightLines.length, 1);
+          const rowH = 3.6 + lineCount * valueLineH + 1.5;
+
+          if ((i / 2) % 2 === 1) {
             docPdf.setFillColor(...STRIPE);
             docPdf.rect(marginX, y, usableW, rowH, 'F');
           }
-          docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(8);
-          docPdf.setTextColor(100, 116, 139);
-          docPdf.text(label.toUpperCase(), marginX + 3, y + 4.8);
-          docPdf.setFont('helvetica', 'normal');
-          docPdf.setFontSize(9.5);
-          docPdf.setTextColor(...NAVY);
-          docPdf.text(String(value), marginX + 68, y + 4.8);
+
+          const drawCell = (x: number, label: string, lines: string[]) => {
+            docPdf.setFont('helvetica', 'bold');
+            docPdf.setFontSize(7);
+            docPdf.setTextColor(100, 116, 139);
+            docPdf.text(label.toUpperCase(), x + 3, y + 3.6);
+            docPdf.setFont('helvetica', 'normal');
+            docPdf.setFontSize(9);
+            docPdf.setTextColor(...NAVY);
+            docPdf.text(lines, x + 3, y + 3.6 + valueLineH);
+          };
+
+          drawCell(marginX, left[0], leftLines);
+          if (right) drawCell(col2X, right[0], rightLines);
+
           y += rowH;
-        });
-        y += 6;
+        }
+        y += 5;
       };
 
       drawSection('DADOS DO ATLETA', [
@@ -325,11 +349,12 @@ export default function AtletaDashboard() {
         ]);
       }
 
+      const footerY = Math.max(y + 8, pageH - 14);
       docPdf.setFont('helvetica', 'italic');
       docPdf.setFontSize(7.5);
       docPdf.setTextColor(148, 163, 184);
-      docPdf.text('Documento gerado automaticamente pelo sistema MCU Night Run. Válido como comprovante de inscrição no evento.', marginX, 283);
-      docPdf.text(`Emitido em ${new Date().toLocaleString('pt-BR')}`, marginX, 287);
+      docPdf.text('Documento gerado automaticamente pelo sistema MCU Night Run. Válido como comprovante de inscrição no evento.', marginX, footerY);
+      docPdf.text(`Emitido em ${new Date().toLocaleString('pt-BR')}`, marginX, footerY + 4);
 
       docPdf.save(`comprovante-inscricao-${String(reg.nome || 'atleta').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-')}.pdf`);
     } catch (e) {

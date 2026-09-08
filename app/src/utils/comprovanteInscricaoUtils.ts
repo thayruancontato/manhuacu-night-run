@@ -105,26 +105,27 @@ export async function generateComprovanteInscricaoPdf(data: ComprovanteInscricao
   docPdf.addImage(titleImgData, 'PNG', marginX, y - titleImgH + 2, titleImgW, titleImgH, undefined, 'FAST');
   y += 5;
 
-  if (fotoBase64) {
-    try {
-      const photoSize = 22;
-      const photoX = pageW - marginX - photoSize;
-      const photoY = headerH + 3;
-      const photoFormat = fotoBase64.includes('image/png') ? 'PNG' : 'JPEG';
-      docPdf.addImage(fotoBase64, photoFormat, photoX, photoY, photoSize, photoSize, 'comprovante-foto', 'FAST');
-      docPdf.setDrawColor(...NAVY);
-      docPdf.setLineWidth(0.6);
-      docPdf.rect(photoX, photoY, photoSize, photoSize, 'D');
-    } catch (e) {
-      console.error('Erro ao inserir foto no comprovante:', e);
-    }
-  }
-
   docPdf.setFont('helvetica', 'italic');
   docPdf.setFontSize(9);
   docPdf.setTextColor(100, 116, 139);
   docPdf.text(`MCU Night Run 2026${data.eventDateFmt ? ` · ${data.eventDateFmt}` : ''} · Manhuaçu/MG`, marginX, y);
   y += 9;
+
+  if (fotoBase64) {
+    try {
+      const photoSize = 28;
+      const photoX = pageW / 2 - photoSize / 2;
+      const photoY = y;
+      const photoFormat = fotoBase64.includes('image/png') ? 'PNG' : 'JPEG';
+      docPdf.addImage(fotoBase64, photoFormat, photoX, photoY, photoSize, photoSize, 'comprovante-foto', 'FAST');
+      docPdf.setDrawColor(...NAVY);
+      docPdf.setLineWidth(0.6);
+      docPdf.rect(photoX, photoY, photoSize, photoSize, 'D');
+      y += photoSize + 8;
+    } catch (e) {
+      console.error('Erro ao inserir foto no comprovante:', e);
+    }
+  }
 
   if (data.numeroInscricao) {
     docPdf.setFillColor(...NAVY);

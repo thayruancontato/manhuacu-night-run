@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
-import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { CheckCircle, CalendarDays, MoonStar, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../../firebase';
 
 interface SoldOutScreenProps {
   confirmedCount: number;
@@ -19,15 +17,17 @@ export const SoldOutScreen = ({ confirmedCount, eventDate, onViewList }: SoldOut
   useEffect(() => {
     (async () => {
       try {
-        const q = query(
-          collection(db, 'nightrun_registrations'),
-          where('paymentStatus', '==', 'pago'),
-          limit(PHOTOS_QUERY_LIMIT)
-        );
-        const snap = await getDocs(q);
-        const urls = snap.docs
-          .map(d => d.data().fotoUrl)
-          .filter((url): url is string => Boolean(url));
+        // Endpoint cacheado do worker (KV) em vez de ler direto do Firestore - esta é a
+        // TELA INICIAL do site, aberta por todo mundo o tempo todo (inclusive gente só
+        // conferindo se ainda dá pra se inscrever), então qualquer leitura direta aqui
+        // multiplica pelo tráfego inteiro do domínio. Ver worker/src/index.js: getCachedConfirmedRoster().
+        const workerUrl = import.meta.env.VITE_WORKER_URL;
+        const res = await fetch(`${workerUrl}/roster/confirmed`);
+        const data = await res.json();
+        const urls = (data.athletes || [])
+          .map((a: any) => a.fotoUrl)
+          .filter((url: any): url is string => Boolean(url))
+          .slice(0, PHOTOS_QUERY_LIMIT);
         setPhotos(urls);
       } catch (e) {
         console.error('Erro ao buscar fotos dos atletas confirmados:', e);

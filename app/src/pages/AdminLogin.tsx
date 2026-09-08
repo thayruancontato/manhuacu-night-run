@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../firebase';
+import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
 import { useDialog } from '../context/CustomDialogContext';
 import { useLoading } from '../components/LoadingService';
 import '../App.css';
@@ -56,7 +57,7 @@ export default function AdminLogin() {
           showAlert('Usuário não encontrado ou senha incorreta.', 'error');
         }
       } else {
-        showAlert('Erro de autenticação: ' + error.message, 'error');
+        showAlert(getFriendlyErrorMessage(error, 'Erro de autenticação: ' + error.message), 'error');
       }
     } finally {
       setLoading(false);

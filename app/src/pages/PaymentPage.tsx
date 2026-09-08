@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
 import { CheckCircle, Copy, CreditCard, Clock } from 'lucide-react';
 import { useDialog } from '../context/CustomDialogContext';
 import LoadingModal from '../components/LoadingModal';
@@ -136,7 +137,7 @@ export default function PaymentPage() {
       }));
       window.open(result.invoiceUrl, '_blank', 'noopener,noreferrer');
     } catch (error: any) {
-      showAlert(error.message || 'Erro ao gerar pagamento com cartão.', 'error');
+      showAlert(getFriendlyErrorMessage(error, error.message || 'Erro ao gerar pagamento com cartão.'), 'error');
     } finally {
       setCreatingCardPayment(false);
     }

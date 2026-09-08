@@ -900,6 +900,15 @@ export default {
         return json(roster);
       }
 
+      if (cleanPath === "/roster/all-lite" && request.method === "GET") {
+        // Usado pelo painel do atleta (AtletaDashboard) pra achar inscrições vinculadas
+        // (mesmo e-mail ou contato de emergência cruzado) sem escanear a coleção inteira
+        // no Firestore a cada visita. Ver getCachedAllRegistrationsLite().
+        const forceRefresh = url.searchParams.get("refresh") === "1";
+        const allLite = await getCachedAllRegistrationsLite(env, { forceRefresh });
+        return json(allLite);
+      }
+
       if (cleanPath === "/thousand/banner-preview" && request.method === "GET") {
         const roster = await fetchConfirmedRosterForBroadcast(env);
         const png = await generateThousandCelebrationBannerPng(env, roster);
@@ -3369,6 +3378,59 @@ async function getCachedConfirmedRoster(env, { forceRefresh = false } = {}) {
 
   if (env.NIGHTRUN_STORAGE) {
     await env.NIGHTRUN_STORAGE.put(ROSTER_CACHE_KEY, JSON.stringify(payload), { expirationTtl: ROSTER_CACHE_TTL_SECONDS });
+  }
+
+  return payload;
+}
+
+const ALL_LITE_CACHE_KEY = "roster:all-lite:cache:v1";
+const ALL_LITE_CACHE_TTL_SECONDS = 180; // 3 minutos
+
+// A tela do atleta (AtletaDashboard) precisa achar "inscrições vinculadas" (mesmo
+// e-mail, ou contato de emergência cruzado) - isso exige olhar TODAS as inscrições,
+// não só as confirmadas, então não dá pra reaproveitar getCachedConfirmedRoster().
+// Antes, cada abertura do painel do atleta lia a colecao inteira (~1000 docs) direto
+// do Firestore. Mesmo cache-por-KV usado no roster de confirmados, só que com os
+// campos minimos pra esse cruzamento (sem foto/endereco, que o roster de confirmados
+// já cobre pra quem precisa).
+async function getCachedAllRegistrationsLite(env, { forceRefresh = false } = {}) {
+  if (!forceRefresh && env.NIGHTRUN_STORAGE) {
+    const cached = await env.NIGHTRUN_STORAGE.get(ALL_LITE_CACHE_KEY);
+    if (cached) {
+      try { return JSON.parse(cached); } catch { /* cache corrompido, recalcula abaixo */ }
+    }
+  }
+
+  const res = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery?key=${env.FIREBASE_API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      structuredQuery: { from: [{ collectionId: "nightrun_registrations" }] }
+    })
+  });
+  const regsData = await res.json().catch(() => []);
+
+  const registrations = (Array.isArray(regsData) ? regsData : [])
+    .filter(r => r.document)
+    .map(r => {
+      const f = r.document.fields || {};
+      return {
+        id: r.document.name.split("/").pop(),
+        nome: f.nome?.stringValue || "Sem nome",
+        email: f.email?.stringValue || "",
+        telefone: f.telefone?.stringValue || "",
+        contatoEmergenciaTelefone: f.contatoEmergencia?.mapValue?.fields?.telefone?.stringValue || "",
+        paymentStatus: f.paymentStatus?.stringValue || "",
+        fotoUrl: f.fotoUrl?.stringValue || "",
+        integranteEquipe: f.integranteEquipe?.stringValue || "",
+        equipeNome: f.equipeNome?.stringValue || "",
+      };
+    });
+
+  const payload = { generatedAt: new Date().toISOString(), count: registrations.length, registrations };
+
+  if (env.NIGHTRUN_STORAGE) {
+    await env.NIGHTRUN_STORAGE.put(ALL_LITE_CACHE_KEY, JSON.stringify(payload), { expirationTtl: ALL_LITE_CACHE_TTL_SECONDS });
   }
 
   return payload;

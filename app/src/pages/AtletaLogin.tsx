@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, getDocs, query, where, getCountFromServer, doc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
+import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
 import { useDialog } from '../context/CustomDialogContext';
 import { useLoading } from '../components/LoadingService';
 import { 
@@ -49,7 +50,7 @@ export default function UnifiedLogin() {
               showAlert('Sistema inicializado com sucesso!', 'success');
               navigate('/admin/dashboard');
             } catch (err: any) {
-              showAlert('Erro ao inicializar: ' + err.message, 'error');
+              showAlert(getFriendlyErrorMessage(err, 'Erro ao inicializar: ' + err.message), 'error');
             } finally {
               setLoading(false);
             }
@@ -103,7 +104,7 @@ export default function UnifiedLogin() {
       }
       showAlert('E-mail ou senha incorretos.', 'error');
     } catch (err: any) {
-      showAlert('Erro ao autenticar: ' + err.message, 'error');
+      showAlert(getFriendlyErrorMessage(err, 'Erro ao autenticar: ' + err.message), 'error');
     } finally {
       setLoading(false);
     }

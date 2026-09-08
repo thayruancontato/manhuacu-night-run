@@ -103,23 +103,38 @@ export default function AtletaDashboard({ mock }: AtletaDashboardProps) {
   }, [isMock, reg?.modalidadeId]);
 
   // Inscrições com ligação a este atleta: mesmo e-mail, ou telefone que aparece
-  // como contato de emergência de um lado ou de outro.
+  // como contato de emergência de um lado ou de outro. Usa o endpoint cacheado do worker
+  // (KV) em vez de escanear a coleção inteira no Firestore a cada abertura do painel -
+  // essa tela é aberta por até 1000 atletas, repetidamente. Ver worker/src/index.js:
+  // getCachedAllRegistrationsLite().
   useEffect(() => {
     const loadVinculados = async () => {
       if (isMock || !reg?.id) return setVinculados([]);
       try {
-        const snap = await getDocs(collection(db, 'nightrun_registrations'));
+        const workerUrl = import.meta.env.VITE_WORKER_URL;
+        const res = await fetch(`${workerUrl}/roster/all-lite`);
+        const data = await res.json();
         const meuEmail = String(reg.email || '').trim().toLowerCase();
         const meuTelefone = normalizePhoneDigits(reg.telefone);
         const meuContatoTelefone = normalizePhoneDigits(reg.contatoEmergencia?.telefone);
 
-        const encontrados = snap.docs
-          .map(d => ({ id: d.id, ...d.data() } as any))
-          .filter(other => {
+        const encontrados = (data.registrations || [])
+          .map((other: any) => ({
+            id: other.id,
+            nome: other.nome,
+            fotoUrl: other.fotoUrl,
+            paymentStatus: other.paymentStatus,
+            integranteEquipe: other.integranteEquipe,
+            equipeNome: other.equipeNome,
+            email: other.email,
+            telefone: other.telefone,
+            contatoEmergenciaTelefone: other.contatoEmergenciaTelefone,
+          }))
+          .filter((other: any) => {
             if (other.id === reg.id) return false;
             const outroEmail = String(other.email || '').trim().toLowerCase();
             const outroTelefone = normalizePhoneDigits(other.telefone);
-            const outroContatoTelefone = normalizePhoneDigits(other.contatoEmergencia?.telefone);
+            const outroContatoTelefone = normalizePhoneDigits(other.contatoEmergenciaTelefone);
 
             const mesmoEmail = !!meuEmail && meuEmail === outroEmail;
             const souContatoDele = !!meuTelefone && meuTelefone === outroContatoTelefone;
@@ -127,7 +142,7 @@ export default function AtletaDashboard({ mock }: AtletaDashboardProps) {
 
             return mesmoEmail || souContatoDele || eleEhMeuContato;
           })
-          .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+          .sort((a: any, b: any) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
 
         setVinculados(encontrados);
       } catch (error) {

@@ -6,6 +6,7 @@ import Cropper, { type Area } from 'react-easy-crop';
 import { addDoc, collection, doc, getCountFromServer, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore';
 import { ArrowRight, Baby, Camera, CreditCard, Mail, Phone, PersonStanding, User, Users } from 'lucide-react';
 import { db } from '../firebase';
+import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
 import { CATEGORIAS, KITS, TAMANHOS_CAMISETA } from '../types';
 import LoadingModal from '../components/LoadingModal';
 import { useDialog } from '../context/CustomDialogContext';
@@ -652,7 +653,7 @@ export default function PublicForm() {
       set('fotoUrl', url);
       setPhotoCrop(null);
     } catch (error: any) {
-      showAlert(error.message || 'Erro ao processar foto.', 'error');
+      showAlert(getFriendlyErrorMessage(error, error.message || 'Erro ao processar foto.'), 'error');
     } finally {
       setLoading(false);
     }
@@ -732,8 +733,9 @@ export default function PublicForm() {
       showAlert('Cupom aplicado com sucesso.', 'success');
     } catch (error: any) {
       setAppliedCoupon(null);
-      setCouponFeedback(error.message || 'Nao foi possivel aplicar o cupom.');
-      showAlert(error.message || 'Nao foi possivel aplicar o cupom.', 'warning');
+      const couponMsg = getFriendlyErrorMessage(error, error.message || 'Nao foi possivel aplicar o cupom.');
+      setCouponFeedback(couponMsg);
+      showAlert(couponMsg, 'warning');
     } finally {
       setCouponLoading(false);
     }
@@ -994,7 +996,7 @@ export default function PublicForm() {
       navigate(isFreeRegistration ? `/inscricao/confirmada/${docRef.id}` : `/inscricao/pagamento/${docRef.id}`);
     } catch (error: any) {
       console.error('[PublicForm] submit:error', error);
-      showAlert(error.message || 'Erro ao finalizar inscrição.', 'error');
+      showAlert(getFriendlyErrorMessage(error, error.message || 'Erro ao finalizar inscrição.'), 'error');
     } finally {
       setLoading(false);
     }

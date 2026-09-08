@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import AtletaDashboard from './AtletaDashboard';
 import { MOCK_ATLETA_REG, MOCK_MODALIDADE, MOCK_CAMISETA_LABEL, MOCK_KIT_NOME } from '../utils/mockAtletaExemplo';
@@ -31,20 +30,10 @@ export default function AdminPerfilExemploPreview() {
       </div>
       <header style={{
         background: 'linear-gradient(135deg, #071A45, #123068)', padding: '12px 24px',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        display: 'flex', alignItems: 'center',
         boxShadow: '0 2px 10px rgba(0,0,0,.1)',
       }}>
         <img src="/LOGO horizontal NIGHT RUN SEM FUNDO (em amarelo e branco).png" alt="MCU Night Run" style={{ height: '32px' }} />
-        <button
-          onClick={() => navigate('/admin/comprovante-exemplo')}
-          style={{
-            background: 'rgba(255,255,255,.08)', border: 'none', color: '#fff',
-            padding: '8px 16px', borderRadius: 8, cursor: 'pointer', display: 'flex',
-            alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700,
-          }}
-        >
-          <ArrowLeft size={16} /> Voltar ao admin
-        </button>
       </header>
       <main style={{ maxWidth: 900, margin: '0 auto', padding: '32px 20px' }}>
         <AtletaDashboard

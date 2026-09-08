@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
-import { collection, getDocs, query, where, getCountFromServer, doc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
 import { useDialog } from '../context/CustomDialogContext';
@@ -18,7 +18,7 @@ export default function UnifiedLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const { showAlert, showConfirm } = useDialog();
+  const { showAlert } = useDialog();
   const { showLoading } = useLoading();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -30,36 +30,10 @@ export default function UnifiedLogin() {
     const cleanPassword = password.replace(/\D/g, '');
 
     try {
-      // 0. VERIFICAR SE EXISTE ALGUM ADMIN (BOOTSTRAP)
-      const countSnap = await getCountFromServer(collection(db, 'nightrun_admins'));
-      if (countSnap.data().count === 0) {
-        setLoading(false);
-        showConfirm(
-          'SISTEMA NÃO INICIALIZADO: Deseja criar o primeiro administrador com este e-mail e senha',
-          async () => {
-            try {
-              setLoading(true);
-              await setDoc(doc(db, 'nightrun_admins', cleanEmail), {
-                email: cleanEmail,
-                role: 'admin',
-                bootstrapCode: 'MCU2026', // Chave mestre para autorizar o primeiro admin via Firestore Rules
-                createdAt: new Date().toISOString()
-              });
-              await createUserWithEmailAndPassword(auth, cleanEmail, password);
-              localStorage.setItem('nightrun_admin_auth', 'true');
-              showAlert('Sistema inicializado com sucesso!', 'success');
-              navigate('/admin/dashboard');
-            } catch (err: any) {
-              showAlert(getFriendlyErrorMessage(err, 'Erro ao inicializar: ' + err.message), 'error');
-            } finally {
-              setLoading(false);
-            }
-          }
-        );
-        return;
-      }
-
       // 1. TENTAR LOGIN COMO ADMIN
+      // (o bootstrap do primeiro admin do sistema já foi feito há muito tempo - checar "existe
+      // algum admin?" a cada tentativa de login só gastava 1 leitura extra de Firestore sempre,
+      // à toa, para todo mundo, inclusive atletas.)
       const adminDoc = await getDocs(query(collection(db, 'nightrun_admins'), where('email', '==', cleanEmail)));
       if (!adminDoc.empty) {
         try {

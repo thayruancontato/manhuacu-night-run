@@ -9,6 +9,7 @@ import { type Modalidade } from '../types';
 import { AdminPageSkeleton } from '../components/Skeleton';
 import PlanilhaGeradorTab from '../components/AdminModalidades/PlanilhaGeradorTab';
 import { fetchKits, resolveKitNome, DEFAULT_KIT_ID, type KitRecord } from '../utils/kitsUtils';
+import { getCamisetaShortLabel } from '../utils/camisetaUtils';
 import '../styles/admin.css';
 
 const CHILD_RACE_PRESETS = [
@@ -81,6 +82,18 @@ export default function AdminModalidades() {
   const infantilGroups = getGroupsForCategoria('infantil');
   const adultoGroups = getGroupsForCategoria('adulto');
 
+  // "Tamanho - Tipo" da camiseta pra listar nos PDFs de retirada (ex: "M - Normal",
+  // "10 - Infantil", "P - Baby Look") - tipo vem da categoria/tipo cadastrados no tamanho em
+  // si (nightrun_camisetas), não dá pra inferir só pelo texto do tamanho.
+  const resolveCamisetaLabel = (camisetas: any[], tamanhoCamiseta?: string) => {
+    if (!tamanhoCamiseta) return '';
+    const item = camisetas.find(c => c.id === tamanhoCamiseta);
+    const tamanho = getCamisetaShortLabel(tamanhoCamiseta, item);
+    if (!tamanho) return '';
+    const tipo = item?.categoria === 'infantil' ? 'Infantil' : (item?.tipo === 'Baby Look' ? 'Baby Look' : 'Normal');
+    return `${tamanho} - ${tipo}`;
+  };
+
   // Gera a lista em PDF de quem está confirmado numa modalidade específica - mesmo padrão
   // visual e técnico do PDF de confirmados por kit (AdminKits): header.png em todas as
   // páginas via o mesmo alias no jsPDF (bytes embutidos uma única vez), título com a fonte
@@ -89,7 +102,8 @@ export default function AdminModalidades() {
   const generateModalidadePdf = async (mod: Modalidade, options: { kitFilterIds?: string[] | null; silent?: boolean } = {}) => {
     const { kitFilterIds = null, silent = false } = options;
     try {
-      const kits = await fetchKits();
+      const [kits, camisetasSnap] = await Promise.all([fetchKits(), getDocs(collection(db, 'nightrun_camisetas'))]);
+      const camisetas = camisetasSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       // Busca as inscrições direto do Firestore no momento de gerar (não usa o array `regs`
       // carregado uma vez ao abrir a página) - mesma regra do PDF de kit: se o admin editou o
       // kit ou a modalidade de alguém pela ficha, o PDF sempre reflete o estado atual, não o
@@ -101,6 +115,7 @@ export default function AdminModalidades() {
         .filter(r => kitFilterIds === null || kitFilterIds.includes(r.kit || DEFAULT_KIT_ID))
         .map(r => ({
           nome: String(r.nome || 'Sem nome'),
+          camiseta: resolveCamisetaLabel(camisetas, r.tamanhoCamiseta),
           kit: resolveKitNome(kits, r.kit, 'Kit Único'),
         }))
         .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
@@ -163,9 +178,12 @@ export default function AdminModalidades() {
       // Coluna de assinatura em branco na frente - o atleta (ou quem retira o kit por ele,
       // ver autorização de retirada por terceiro) assina aqui na hora de receber, servindo
       // de comprovante físico de entrega.
-      const colAssinaturaW = 38;
-      const colNomeW = (usableW - colAssinaturaW) * 0.6;
-      const colKitX = marginX + colAssinaturaW + colNomeW;
+      const colAssinaturaW = 34;
+      const colRestante = usableW - colAssinaturaW;
+      const colNomeW = colRestante * 0.42;
+      const colCamisetaW = colRestante * 0.32;
+      const colCamisetaX = marginX + colAssinaturaW + colNomeW;
+      const colKitX = colCamisetaX + colCamisetaW;
       const rowLineH = 5.4;
       const rowPaddingV = 3.4;
 
@@ -179,6 +197,7 @@ export default function AdminModalidades() {
         docPdf.setTextColor(255, 255, 255);
         docPdf.text('ASSINATURA', marginX + 3, y + 6.2);
         docPdf.text('NOME', marginX + colAssinaturaW + 3, y + 6.2);
+        docPdf.text('CAMISETA', colCamisetaX + 3, y + 6.2);
         docPdf.text('KIT', colKitX + 3, y + 6.2);
         y += 9;
       };
@@ -228,12 +247,14 @@ export default function AdminModalidades() {
         docPdf.setDrawColor(226, 232, 240);
         docPdf.setLineWidth(0.2);
         docPdf.line(marginX + colAssinaturaW, y, marginX + colAssinaturaW, y + rowH);
+        docPdf.line(colCamisetaX, y, colCamisetaX, y + rowH);
         docPdf.line(colKitX, y, colKitX, y + rowH);
 
         docPdf.setFont('helvetica', 'normal');
         docPdf.setFontSize(9.5);
         docPdf.setTextColor(...NAVY_PDF);
         docPdf.text(nomeLines, marginX + colAssinaturaW + 3, y + rowLineH - 0.8);
+        docPdf.text(item.camiseta || '-', colCamisetaX + 3, y + rowLineH - 0.8);
         docPdf.text(item.kit, colKitX + 3, y + rowLineH - 0.8);
 
         y += rowH;
@@ -261,7 +282,8 @@ export default function AdminModalidades() {
   ) => {
     const { titulo, infoText, fileNameBase, kitFilterIds = null, silent = false } = opts;
     try {
-      const kits = await fetchKits();
+      const [kits, camisetasSnap] = await Promise.all([fetchKits(), getDocs(collection(db, 'nightrun_camisetas'))]);
+      const camisetas = camisetasSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       const modalidadeNomeById: Record<string, string> = {};
       mods.forEach(mod => { modalidadeNomeById[mod.id!] = mod.nome; });
       // Busca as inscrições direto do Firestore no momento de gerar (mesma regra do PDF de
@@ -273,7 +295,12 @@ export default function AdminModalidades() {
         .map(d => d.data())
         .filter(r => r.paymentStatus === 'pago' || r.kitConfirmado || r.contractStatus === 'confirmado')
         .filter(r => kitFilterIds === null || kitFilterIds.includes(r.kit || DEFAULT_KIT_ID))
-        .map(r => ({ nome: String(r.nome || 'Sem nome'), modalidade: modalidadeNomeById[r.modalidadeId] || '', kit: resolveKitNome(kits, r.kit, 'Kit Único') }))
+        .map(r => ({
+          nome: String(r.nome || 'Sem nome'),
+          modalidade: modalidadeNomeById[r.modalidadeId] || '',
+          camiseta: resolveCamisetaLabel(camisetas, r.tamanhoCamiseta),
+          kit: resolveKitNome(kits, r.kit, 'Kit Único'),
+        }))
         .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
       const headerBase64: string = await new Promise((resolve, reject) => {
@@ -334,12 +361,14 @@ export default function AdminModalidades() {
       const usableW = pageW - marginX * 2;
       // Coluna de assinatura em branco na frente - mesmo padrão do PDF por modalidade
       // individual, pra servir de comprovante físico de entrega do kit.
-      const colAssinaturaW = 34;
+      const colAssinaturaW = 32;
       const colRestante = usableW - colAssinaturaW;
-      const colNomeW = colRestante * 0.5;
-      const colModalidadeW = colRestante * 0.27;
+      const colNomeW = colRestante * 0.32;
+      const colModalidadeW = colRestante * 0.22;
+      const colCamisetaW = colRestante * 0.22;
       const colModalidadeX = marginX + colAssinaturaW + colNomeW;
-      const colKitX = colModalidadeX + colModalidadeW;
+      const colCamisetaX = colModalidadeX + colModalidadeW;
+      const colKitX = colCamisetaX + colCamisetaW;
       const rowLineH = 5.4;
       const rowPaddingV = 3.4;
 
@@ -354,6 +383,7 @@ export default function AdminModalidades() {
         docPdf.text('ASSINATURA', marginX + 3, y + 6.2);
         docPdf.text('NOME', marginX + colAssinaturaW + 3, y + 6.2);
         docPdf.text('MODALIDADE', colModalidadeX + 3, y + 6.2);
+        docPdf.text('CAMISETA', colCamisetaX + 3, y + 6.2);
         docPdf.text('KIT', colKitX + 3, y + 6.2);
         y += 9;
       };
@@ -402,6 +432,7 @@ export default function AdminModalidades() {
         docPdf.setLineWidth(0.2);
         docPdf.line(marginX + colAssinaturaW, y, marginX + colAssinaturaW, y + rowH);
         docPdf.line(colModalidadeX, y, colModalidadeX, y + rowH);
+        docPdf.line(colCamisetaX, y, colCamisetaX, y + rowH);
         docPdf.line(colKitX, y, colKitX, y + rowH);
 
         docPdf.setFont('helvetica', 'normal');
@@ -409,6 +440,7 @@ export default function AdminModalidades() {
         docPdf.setTextColor(...NAVY_PDF);
         docPdf.text(nomeLines, marginX + colAssinaturaW + 3, y + rowLineH - 0.8);
         docPdf.text(item.modalidade, colModalidadeX + 3, y + rowLineH - 0.8);
+        docPdf.text(item.camiseta || '-', colCamisetaX + 3, y + rowLineH - 0.8);
         docPdf.text(item.kit, colKitX + 3, y + rowLineH - 0.8);
 
         y += rowH;

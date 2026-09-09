@@ -113,7 +113,7 @@ export async function generateComprovanteInscricaoPdf(data: ComprovanteInscricao
 
   if (fotoBase64) {
     try {
-      const photoSize = 28;
+      const photoSize = 24;
       const photoX = pageW / 2 - photoSize / 2;
       const photoY = y;
       const photoFormat = fotoBase64.includes('image/png') ? 'PNG' : 'JPEG';
@@ -121,7 +121,7 @@ export async function generateComprovanteInscricaoPdf(data: ComprovanteInscricao
       docPdf.setDrawColor(...NAVY);
       docPdf.setLineWidth(0.6);
       docPdf.rect(photoX, photoY, photoSize, photoSize, 'D');
-      y += photoSize + 8;
+      y += photoSize + 6;
     } catch (e) {
       console.error('Erro ao inserir foto no comprovante:', e);
     }
@@ -129,68 +129,146 @@ export async function generateComprovanteInscricaoPdf(data: ComprovanteInscricao
 
   if (data.numeroInscricao) {
     docPdf.setFillColor(...NAVY);
-    docPdf.roundedRect(marginX, y, usableW, 20, 3, 3, 'F');
+    docPdf.roundedRect(marginX, y, usableW, 18, 3, 3, 'F');
     docPdf.setFont('helvetica', 'bold');
-    docPdf.setFontSize(8);
+    docPdf.setFontSize(7.5);
     docPdf.setTextColor(255, 255, 255);
-    docPdf.text('NÚMERO DA INSCRIÇÃO', marginX + 6, y + 7.5);
+    docPdf.text('NÚMERO DA INSCRIÇÃO', marginX + 6, y + 7);
     docPdf.setFont('courier', 'bold');
-    docPdf.setFontSize(17);
+    docPdf.setFontSize(15.5);
     docPdf.setTextColor(...GREEN);
-    docPdf.text(String(data.numeroInscricao), marginX + 6, y + 16);
+    docPdf.text(String(data.numeroInscricao), marginX + 6, y + 14.5);
 
     const statusText = data.isPago ? 'PAGAMENTO CONFIRMADO' : 'AGUARDANDO PAGAMENTO';
     docPdf.setFont('helvetica', 'bold');
-    docPdf.setFontSize(8.5);
+    docPdf.setFontSize(8);
     const statusW = docPdf.getTextWidth(statusText);
     docPdf.setTextColor(255, 255, 255);
-    docPdf.text(statusText, marginX + usableW - statusW - 6, y + 11.5);
-    y += 20 + 8;
+    docPdf.text(statusText, marginX + usableW - statusW - 6, y + 10.5);
+    y += 18 + 6;
   }
 
   if (data.titularidadeRecebida) {
     const noticeText = `TITULARIDADE TRANSFERIDA: esta inscrição pertencia originalmente a ${data.titularidadeRecebidaDeNome || 'outro atleta'} e foi repassada para o atleta abaixo.`;
     docPdf.setFont('helvetica', 'bold');
-    docPdf.setFontSize(8);
+    docPdf.setFontSize(7.5);
     const noticeLines = docPdf.splitTextToSize(noticeText, usableW - 12);
-    const noticeH = noticeLines.length * 4 + 6;
+    const noticeH = noticeLines.length * 3.6 + 5;
     docPdf.setFillColor(255, 251, 235);
     docPdf.setDrawColor(252, 211, 77);
     docPdf.roundedRect(marginX, y, usableW, noticeH, 2, 2, 'FD');
     docPdf.setTextColor(146, 64, 14);
-    docPdf.text(noticeLines, marginX + 6, y + 5);
-    y += noticeH + 8;
+    docPdf.text(noticeLines, marginX + 6, y + 4.6);
+    y += noticeH + 6;
   }
 
-  // Duas colunas lado a lado por linha (label em cima, valor embaixo, quebrando linha
-  // se precisar) - em vez de uma coluna só - pra caber tudo numa única página sem
-  // nunca cortar texto, não importa quantos campos a inscrição tenha.
+  // Duas colunas lado a lado por linha (label em cima, valor embaixo, quebrando linha se
+  // precisar) pra caber tudo numa única página sem nunca cortar texto. O número de campos
+  // preenchidos varia por inscrição (endereço, foto, aviso de titularidade são opcionais),
+  // então medimos a altura total ANTES de desenhar: se a versão normal (mais espaçada) não
+  // couber no espaço restante da página, compactamos fonte/espaçamento - nunca o contrário
+  // (nunca deixamos o conteúdo estourar a página pra manter um espaçamento "bonito").
   const colGap = 6;
   const colW = (usableW - colGap) / 2;
   const col2X = marginX + colW + colGap;
-  const valueLineH = 4.1;
 
-  const drawSection = (title: string, rows: [string, any][]) => {
-    const visibleRows = rows.filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
-    if (visibleRows.length === 0) return;
+  const sections: { title: string; rows: [string, any][] }[] = [
+    {
+      title: 'DADOS DO ATLETA',
+      rows: [
+        ['Nome completo', data.nome],
+        ['CPF', data.cpf],
+        ['Data de nascimento', data.dataNascimento ? formatDateBR(data.dataNascimento) : ''],
+        ['Sexo', data.sexo === 'M' ? 'Masculino' : data.sexo === 'F' ? 'Feminino' : ''],
+        ['WhatsApp', data.telefone],
+        ['E-mail', data.email],
+      ],
+    },
+    {
+      title: 'PROVA & KIT',
+      rows: [
+        ['Modalidade', data.modalidadeNome],
+        ['Distância', data.modalidadeDistancia],
+        ['Categoria', data.categoria === 'infantil' ? 'Infantil' : 'Adulto / adolescente'],
+        ['Kit', data.kitNome],
+        ['Tamanho da camiseta', data.tamanhoCamisetaLabel],
+        ['Equipe', data.integranteEquipe === 'sim' ? (data.equipeNome || 'Sim') : 'Não'],
+      ],
+    },
+    {
+      title: 'INSCRIÇÃO & PAGAMENTO',
+      rows: [
+        ['Data da inscrição', data.createdAt ? formatDateBR(data.createdAt) : ''],
+        ['Valor pago', formatMoneyBR(data.amount)],
+        ['Status', data.isPago ? 'Confirmado' : (data.paymentStatus === 'vencido' ? 'Vencido' : 'Aguardando pagamento')],
+      ],
+    },
+  ];
+  if (data.endereco?.cidade) {
+    sections.push({
+      title: 'ENDEREÇO',
+      rows: [
+        ['Cidade / UF', `${data.endereco.cidade} / ${data.endereco.uf || ''}`],
+        ['Bairro', data.endereco.bairro],
+        ['Rua', data.endereco.rua ? `${data.endereco.rua}${data.endereco.numero ? `, ${data.endereco.numero}` : ''}` : ''],
+        ['CEP', data.endereco.cep],
+      ],
+    });
+  }
 
+  type SectionStyle = {
+    valueFontSize: number; labelFontSize: number; titleFontSize: number;
+    valueLineH: number; rowPadTop: number; rowPadBottom: number;
+    sectionHeaderH: number; sectionGap: number;
+  };
+  const NORMAL: SectionStyle = { valueFontSize: 9, labelFontSize: 7, titleFontSize: 8.5, valueLineH: 4.1, rowPadTop: 3.6, rowPadBottom: 1.5, sectionHeaderH: 7, sectionGap: 5 };
+  const COMPACT: SectionStyle = { valueFontSize: 7.8, labelFontSize: 6, titleFontSize: 7.5, valueLineH: 3.3, rowPadTop: 3, rowPadBottom: 1, sectionHeaderH: 5.5, sectionGap: 3 };
+
+  const visibleSections = sections
+    .map(s => ({ title: s.title, visibleRows: s.rows.filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '') }))
+    .filter(s => s.visibleRows.length > 0);
+
+  const measureHeight = (style: SectionStyle) => {
+    docPdf.setFont('helvetica', 'normal');
+    docPdf.setFontSize(style.valueFontSize);
+    let total = 0;
+    visibleSections.forEach(s => {
+      total += style.sectionHeaderH;
+      for (let i = 0; i < s.visibleRows.length; i += 2) {
+        const left = s.visibleRows[i];
+        const right = s.visibleRows[i + 1];
+        const leftLines = docPdf.splitTextToSize(String(left[1]), colW - 4).length;
+        const rightLines = right ? docPdf.splitTextToSize(String(right[1]), colW - 4).length : 0;
+        const lineCount = Math.max(leftLines, rightLines, 1);
+        total += style.rowPadTop + lineCount * style.valueLineH + style.rowPadBottom;
+      }
+      total += style.sectionGap;
+    });
+    return total;
+  };
+
+  const footerReserve = 14;
+  const availableForSections = pageH - footerReserve - y;
+  const style = measureHeight(NORMAL) <= availableForSections ? NORMAL : COMPACT;
+
+  const drawSection = (title: string, visibleRows: [string, any][]) => {
     docPdf.setFillColor(...NAVY);
-    docPdf.rect(marginX, y, usableW, 7, 'F');
+    docPdf.rect(marginX, y, usableW, style.sectionHeaderH, 'F');
     docPdf.setFont('helvetica', 'bold');
-    docPdf.setFontSize(8.5);
+    docPdf.setFontSize(style.titleFontSize);
     docPdf.setTextColor(255, 255, 255);
-    docPdf.text(title, marginX + 3, y + 4.9);
-    y += 7;
+    docPdf.text(title, marginX + 3, y + style.sectionHeaderH * 0.7);
+    y += style.sectionHeaderH;
 
     docPdf.setFont('helvetica', 'normal');
-    docPdf.setFontSize(9);
+    docPdf.setFontSize(style.valueFontSize);
     for (let i = 0; i < visibleRows.length; i += 2) {
       const left = visibleRows[i];
       const right = visibleRows[i + 1];
       const leftLines = docPdf.splitTextToSize(String(left[1]), colW - 4);
       const rightLines = right ? docPdf.splitTextToSize(String(right[1]), colW - 4) : [];
       const lineCount = Math.max(leftLines.length, rightLines.length, 1);
-      const rowH = 3.6 + lineCount * valueLineH + 1.5;
+      const rowH = style.rowPadTop + lineCount * style.valueLineH + style.rowPadBottom;
 
       if ((i / 2) % 2 === 1) {
         docPdf.setFillColor(...STRIPE);
@@ -199,13 +277,13 @@ export async function generateComprovanteInscricaoPdf(data: ComprovanteInscricao
 
       const drawCell = (x: number, label: string, lines: string[]) => {
         docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(7);
+        docPdf.setFontSize(style.labelFontSize);
         docPdf.setTextColor(100, 116, 139);
-        docPdf.text(label.toUpperCase(), x + 3, y + 3.6);
+        docPdf.text(label.toUpperCase(), x + 3, y + style.rowPadTop);
         docPdf.setFont('helvetica', 'normal');
-        docPdf.setFontSize(9);
+        docPdf.setFontSize(style.valueFontSize);
         docPdf.setTextColor(...NAVY);
-        docPdf.text(lines, x + 3, y + 3.6 + valueLineH);
+        docPdf.text(lines, x + 3, y + style.rowPadTop + style.valueLineH);
       };
 
       drawCell(marginX, left[0], leftLines);
@@ -213,43 +291,12 @@ export async function generateComprovanteInscricaoPdf(data: ComprovanteInscricao
 
       y += rowH;
     }
-    y += 5;
+    y += style.sectionGap;
   };
 
-  drawSection('DADOS DO ATLETA', [
-    ['Nome completo', data.nome],
-    ['CPF', data.cpf],
-    ['Data de nascimento', data.dataNascimento ? formatDateBR(data.dataNascimento) : ''],
-    ['Sexo', data.sexo === 'M' ? 'Masculino' : data.sexo === 'F' ? 'Feminino' : ''],
-    ['WhatsApp', data.telefone],
-    ['E-mail', data.email],
-  ]);
+  visibleSections.forEach(s => drawSection(s.title, s.visibleRows));
 
-  drawSection('PROVA & KIT', [
-    ['Modalidade', data.modalidadeNome],
-    ['Distância', data.modalidadeDistancia],
-    ['Categoria', data.categoria === 'infantil' ? 'Infantil' : 'Adulto / adolescente'],
-    ['Kit', data.kitNome],
-    ['Tamanho da camiseta', data.tamanhoCamisetaLabel],
-    ['Equipe', data.integranteEquipe === 'sim' ? (data.equipeNome || 'Sim') : 'Não'],
-  ]);
-
-  drawSection('INSCRIÇÃO & PAGAMENTO', [
-    ['Data da inscrição', data.createdAt ? formatDateBR(data.createdAt) : ''],
-    ['Valor pago', formatMoneyBR(data.amount)],
-    ['Status', data.isPago ? 'Confirmado' : (data.paymentStatus === 'vencido' ? 'Vencido' : 'Aguardando pagamento')],
-  ]);
-
-  if (data.endereco?.cidade) {
-    drawSection('ENDEREÇO', [
-      ['Cidade / UF', `${data.endereco.cidade} / ${data.endereco.uf || ''}`],
-      ['Bairro', data.endereco.bairro],
-      ['Rua', data.endereco.rua ? `${data.endereco.rua}${data.endereco.numero ? `, ${data.endereco.numero}` : ''}` : ''],
-      ['CEP', data.endereco.cep],
-    ]);
-  }
-
-  const footerY = Math.max(y + 8, pageH - 14);
+  const footerY = Math.min(Math.max(y + 8, pageH - footerReserve), pageH - 8);
   docPdf.setFont('helvetica', 'italic');
   docPdf.setFontSize(7.5);
   docPdf.setTextColor(148, 163, 184);

@@ -66,6 +66,7 @@ export default function AdminKits() {
   const [sizes, setSizes] = useState<CamisetaSize[]>([]);
   const [confirmedSizeCounts, setConfirmedSizeCounts] = useState<Record<string, number>>({});
   const [confirmedKitCounts, setConfirmedKitCounts] = useState<Record<string, number>>({});
+  const [confirmedKitInfantilCounts, setConfirmedKitInfantilCounts] = useState<Record<string, number>>({});
   const [confirmedRegsBrief, setConfirmedRegsBrief] = useState<{ tamanhoCamiseta: string; kit: string }[]>([]);
   const [showSummaryKitPicker, setShowSummaryKitPicker] = useState(false);
   const [summaryKitIds, setSummaryKitIds] = useState<string[]>([]);
@@ -165,6 +166,7 @@ export default function AdminKits() {
     const unsubRegistrations = onSnapshot(collection(db, 'nightrun_registrations'), (snap) => {
       const counts: Record<string, number> = {};
       const kitCounts: Record<string, number> = {};
+      const kitInfantilCounts: Record<string, number> = {};
       const brief: { tamanhoCamiseta: string; kit: string }[] = [];
       snap.docs.forEach(item => {
         const data = item.data();
@@ -176,9 +178,13 @@ export default function AdminKits() {
           brief.push({ tamanhoCamiseta: data.tamanhoCamiseta, kit: kitId });
         }
         kitCounts[kitId] = (kitCounts[kitId] || 0) + 1;
+        if (data.categoria === 'infantil') {
+          kitInfantilCounts[kitId] = (kitInfantilCounts[kitId] || 0) + 1;
+        }
       });
       setConfirmedSizeCounts(counts);
       setConfirmedKitCounts(kitCounts);
+      setConfirmedKitInfantilCounts(kitInfantilCounts);
       setConfirmedRegsBrief(brief);
     });
 
@@ -850,9 +856,17 @@ export default function AdminKits() {
                     </div>
                   </div>
                   {kit.descricao && <p style={{ fontSize: '0.82rem', color: '#64748b', lineHeight: 1.4, marginBottom: 10 }}>{kit.descricao}</p>}
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 10, background: '#ecfdf5', color: '#166534', border: '1px solid #bbf7d0', padding: '5px 10px', borderRadius: 8, fontSize: '.72rem', fontWeight: 950 }}>
-                    <Lucide.CheckCircle2 size={14} />
-                    {confirmedKitCounts[kit.id] || 0} confirmado(s) neste kit
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#ecfdf5', color: '#166534', border: '1px solid #bbf7d0', padding: '5px 10px', borderRadius: 8, fontSize: '.72rem', fontWeight: 950 }}>
+                      <Lucide.CheckCircle2 size={14} />
+                      {confirmedKitCounts[kit.id] || 0} confirmado(s) neste kit
+                    </div>
+                    {(confirmedKitInfantilCounts[kit.id] || 0) > 0 && (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fdf4ff', color: '#86198f', border: '1px solid #f5d0fe', padding: '5px 10px', borderRadius: 8, fontSize: '.72rem', fontWeight: 950 }}>
+                        <Lucide.Baby size={14} />
+                        {confirmedKitInfantilCounts[kit.id]} infantil(is)
+                      </div>
+                    )}
                   </div>
                   {kit.itens.length > 0 && (
                     <ul style={{ margin: '0 0 12px', paddingLeft: 18, color: '#334155', fontSize: '0.8rem', lineHeight: 1.6 }}>

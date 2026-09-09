@@ -68,6 +68,7 @@ export default function AdminKits() {
   const [confirmedKitCounts, setConfirmedKitCounts] = useState<Record<string, number>>({});
   const [confirmedKitInfantilCounts, setConfirmedKitInfantilCounts] = useState<Record<string, number>>({});
   const [confirmedRegsBrief, setConfirmedRegsBrief] = useState<{ tamanhoCamiseta: string; kit: string }[]>([]);
+  const [sizeBreakdownKit, setSizeBreakdownKit] = useState<KitOption | null>(null);
   const [showSummaryKitPicker, setShowSummaryKitPicker] = useState(false);
   const [summaryKitIds, setSummaryKitIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -887,6 +888,9 @@ export default function AdminKits() {
                         ATIVAR
                       </button>
                     )}
+                    <button onClick={() => setSizeBreakdownKit(kit)} style={{ background: '#f5f3ff', border: 'none', padding: '6px 12px', borderRadius: 6, color: '#6d28d9', fontWeight: 800, fontSize: '0.7rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Lucide.Shirt size={13} /> VER TAMANHOS
+                    </button>
                     <button onClick={() => handleExportKitPdf(kit)} disabled={exportingKitId === kit.id} style={{ background: '#eff6ff', border: 'none', padding: '6px 12px', borderRadius: 6, color: '#2563eb', fontWeight: 800, fontSize: '0.7rem', cursor: exportingKitId === kit.id ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Lucide.FileDown size={13} /> {exportingKitId === kit.id ? 'GERANDO...' : 'EXPORTAR PDF'}
                     </button>
@@ -1398,6 +1402,62 @@ export default function AdminKits() {
           </div>
         </div>
       )}
+
+      {sizeBreakdownKit && (() => {
+        const kitId = sizeBreakdownKit.id;
+        const countsForKit: Record<string, number> = {};
+        confirmedRegsBrief.forEach(r => {
+          if (r.kit !== kitId) return;
+          countsForKit[r.tamanhoCamiseta] = (countsForKit[r.tamanhoCamiseta] || 0) + 1;
+        });
+        const total = Object.values(countsForKit).reduce((s, n) => s + n, 0);
+        const groups = groupedSizeSummary
+          .map(group => ({ ...group, items: group.items.filter(size => (countsForKit[size.id] || 0) > 0) }))
+          .filter(group => group.items.length > 0);
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
+            <div style={{ background: '#fff', borderRadius: 24, width: '100%', maxWidth: 460, maxHeight: '85vh', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: '24px 30px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 900, color: '#071A45' }}>Tamanhos - {sizeBreakdownKit.nome}</h3>
+                  <p style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600, margin: '2px 0 0' }}>Confirmados por tamanho de camiseta neste kit</p>
+                </div>
+                <button onClick={() => setSizeBreakdownKit(null)} style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', color: '#94a3b8' }}>&times;</button>
+              </div>
+              <div style={{ padding: 24, overflowY: 'auto' }}>
+                {groups.length === 0 ? (
+                  <p style={{ color: '#94a3b8', fontSize: '0.85rem', textAlign: 'center', padding: '20px 0' }}>
+                    Nenhum confirmado com tamanho registrado neste kit ainda.
+                  </p>
+                ) : (
+                  groups.map(group => (
+                    <div key={group.label} style={{ marginBottom: 18 }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 900, color: group.color, textTransform: 'uppercase', marginBottom: 6, letterSpacing: 0.5 }}>
+                        {group.label}
+                      </div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <tbody>
+                          {group.items.map(size => (
+                            <tr key={size.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '8px 4px', fontSize: '0.85rem', color: '#334155', fontWeight: 700 }}>{size.label}</td>
+                              <td style={{ padding: '8px 4px', fontSize: '0.85rem', color: '#071A45', fontWeight: 900, textAlign: 'right' }}>{countsForKit[size.id] || 0}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div style={{ padding: '16px 24px', borderTop: '1px solid #f1f5f9', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Total</span>
+                <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#071A45' }}>{total}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

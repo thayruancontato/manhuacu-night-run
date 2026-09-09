@@ -11,6 +11,7 @@ import { useDialog } from '../context/CustomDialogContext';
 import { useAuth } from '../context/AuthContext';
 import SendCardChoiceModal from '../components/SendCardChoiceModal';
 import { formatDateBR, toDateValue } from '../utils/dateUtils';
+import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
 import { findCamisetaByValue, formatCamisetaLabel } from '../utils/camisetaUtils';
 import {
   ArrowLeft, Edit, Trash2, Send, Save, X, Phone,
@@ -340,7 +341,7 @@ export default function AdminAtletaDetalhes() {
       loadAtleta();
     } catch (error: any) {
       console.error('[AdminAtletaDetalhes] confirm payment failed', error);
-      showAlert(error.message || 'Erro ao atualizar.', 'error');
+      showAlert(getFriendlyErrorMessage(error, error.message || 'Erro ao atualizar.'), 'error');
     } finally {
       setConfirmingPayment(false);
     }

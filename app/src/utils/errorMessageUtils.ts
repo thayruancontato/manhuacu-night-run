@@ -2,7 +2,7 @@
 // estoura) nunca devem aparecer crus pro usuário final - passam por aqui antes de qualquer
 // showAlert/alert nas telas públicas/do atleta, trocando por uma mensagem neutra que só
 // pede pra tentar mais tarde, sem citar cota, sobrecarga ou qualquer detalhe do sistema.
-const QUOTA_ERROR_RE = /quota|resource-exhausted|429/i;
+const QUOTA_ERROR_RE = /quota|resource-exhausted|429|firestore_error/i;
 
 export function getFriendlyErrorMessage(err: any, fallback: string): string {
   const raw = String(err?.message || err?.code || err || '');

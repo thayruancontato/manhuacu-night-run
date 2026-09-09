@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, RefreshCw, Send, SearchCheck, Trash2, Shie
 import { useDialog } from '../context/CustomDialogContext';
 import { db } from '../firebase';
 import { collection, getDocs, query, where, deleteDoc, doc } from 'firebase/firestore';
+import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
 
 type AutoReconcileLog = {
   startedAt: string;
@@ -205,7 +206,7 @@ export default function AdminVerificarPagamentos() {
       await runAudit();
     } catch (error: any) {
       console.error('[AdminVerificarPagamentos] confirm failed', error);
-      showAlert(error.message || 'Erro ao confirmar pagamentos.', 'error');
+      showAlert(getFriendlyErrorMessage(error, error.message || 'Erro ao confirmar pagamentos.'), 'error');
     } finally {
       setConfirming(false);
     }

@@ -2796,6 +2796,9 @@ async function confirmRegistrationPaymentById(env, registrationId, ctx, options 
   const docUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(registrationId)}?key=${env.FIREBASE_API_KEY}`;
   const docRes = await fetch(docUrl);
   if (docRes.status === 404) return { found: false, reason: "registration_not_found" };
+  if (docRes.status === 429) {
+    return { found: false, reason: "quota_exceeded", status: docRes.status };
+  }
   if (!docRes.ok) {
     const errorText = await docRes.text().catch(() => "");
     return { found: false, reason: "firestore_error", status: docRes.status, error: errorText };

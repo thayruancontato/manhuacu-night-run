@@ -3,12 +3,12 @@ import { useSearchParams } from 'react-router-dom';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where } from 'firebase/firestore';
 import { jsPDF } from 'jspdf';
 import { db } from '../firebase';
-import { Plus, Trash2, Edit2, Flag, X, Check, FileText, FileSpreadsheet, ListTree } from 'lucide-react';
+import { Plus, Trash2, Edit2, Flag, X, Check, FileText, FileSpreadsheet, ListTree, Download, Package } from 'lucide-react';
 import { useDialog } from '../context/CustomDialogContext';
 import { type Modalidade } from '../types';
 import { AdminPageSkeleton } from '../components/Skeleton';
 import PlanilhaGeradorTab from '../components/AdminModalidades/PlanilhaGeradorTab';
-import { fetchKits, resolveKitNome } from '../utils/kitsUtils';
+import { fetchKits, resolveKitNome, DEFAULT_KIT_ID, type KitRecord } from '../utils/kitsUtils';
 import '../styles/admin.css';
 
 const CHILD_RACE_PRESETS = [
@@ -27,6 +27,11 @@ export default function AdminModalidades() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [generatingCategoria, setGeneratingCategoria] = useState<'infantil' | 'adulto' | null>(null);
+  const [selectedModIds, setSelectedModIds] = useState<Set<string>>(new Set());
+  const [showKitFilterModal, setShowKitFilterModal] = useState(false);
+  const [availableKits, setAvailableKits] = useState<KitRecord[]>([]);
+  const [selectedKitIds, setSelectedKitIds] = useState<Set<string>>(new Set());
+  const [bulkGenerating, setBulkGenerating] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab: 'modalidades' | 'planilhas' = searchParams.get('tab') === 'planilhas' ? 'planilhas' : 'modalidades';
   const setActiveTab = (tab: 'modalidades' | 'planilhas') => {
@@ -82,7 +87,8 @@ export default function AdminModalidades() {
   // páginas via o mesmo alias no jsPDF (bytes embutidos uma única vez), título com a fonte
   // Anton renderizado em canvas com leve inclinação itálica, texto explicativo em itálico, e
   // tabela com quebra de página segura (altura calculada antes de desenhar, nunca corta nome).
-  const generateModalidadePdf = async (mod: Modalidade) => {
+  const generateModalidadePdf = async (mod: Modalidade, options: { kitFilterIds?: string[] | null; silent?: boolean } = {}) => {
+    const { kitFilterIds = null, silent = false } = options;
     setGeneratingId(mod.id!);
     try {
       const kits = await fetchKits();
@@ -94,6 +100,7 @@ export default function AdminModalidades() {
       const confirmados = snap.docs
         .map(d => d.data())
         .filter(r => r.paymentStatus === 'pago' || r.kitConfirmado || r.contractStatus === 'confirmado')
+        .filter(r => kitFilterIds === null || kitFilterIds.includes(r.kit || DEFAULT_KIT_ID))
         .map(r => ({
           nome: String(r.nome || 'Sem nome'),
           kit: resolveKitNome(kits, r.kit, 'Kit Único'),
@@ -155,7 +162,12 @@ export default function AdminModalidades() {
       };
 
       const usableW = pageW - marginX * 2;
-      const colNomeW = usableW * 0.62;
+      // Coluna de assinatura em branco na frente - o atleta (ou quem retira o kit por ele,
+      // ver autorização de retirada por terceiro) assina aqui na hora de receber, servindo
+      // de comprovante físico de entrega.
+      const colAssinaturaW = 38;
+      const colNomeW = (usableW - colAssinaturaW) * 0.6;
+      const colKitX = marginX + colAssinaturaW + colNomeW;
       const rowLineH = 5.4;
       const rowPaddingV = 3.4;
 
@@ -167,8 +179,9 @@ export default function AdminModalidades() {
         docPdf.setFont('helvetica', 'bold');
         docPdf.setFontSize(9);
         docPdf.setTextColor(255, 255, 255);
-        docPdf.text('NOME', marginX + 3, y + 6.2);
-        docPdf.text('KIT', marginX + colNomeW + 3, y + 6.2);
+        docPdf.text('ASSINATURA', marginX + 3, y + 6.2);
+        docPdf.text('NOME', marginX + colAssinaturaW + 3, y + 6.2);
+        docPdf.text('KIT', colKitX + 3, y + 6.2);
         y += 9;
       };
 
@@ -199,9 +212,11 @@ export default function AdminModalidades() {
         docPdf.text('Nenhum inscrito confirmado nesta modalidade ainda.', marginX, y + 6);
       }
 
+      const rowMinH = 12; // altura mínima confortável pra uma assinatura à mão
+
       confirmados.forEach((item, idx) => {
         const nomeLines = docPdf.splitTextToSize(item.nome.toUpperCase(), colNomeW - 6);
-        const rowH = Math.max(1, nomeLines.length) * rowLineH + rowPaddingV;
+        const rowH = Math.max(rowMinH, Math.max(1, nomeLines.length) * rowLineH + rowPaddingV);
 
         if (y + rowH > pageH - marginBottom) {
           newPage();
@@ -212,18 +227,23 @@ export default function AdminModalidades() {
           docPdf.rect(marginX, y, usableW, rowH, 'F');
         }
 
+        docPdf.setDrawColor(226, 232, 240);
+        docPdf.setLineWidth(0.2);
+        docPdf.line(marginX + colAssinaturaW, y, marginX + colAssinaturaW, y + rowH);
+        docPdf.line(colKitX, y, colKitX, y + rowH);
+
         docPdf.setFont('helvetica', 'normal');
         docPdf.setFontSize(9.5);
         docPdf.setTextColor(...NAVY_PDF);
-        docPdf.text(nomeLines, marginX + 3, y + rowLineH - 0.8);
-        docPdf.text(item.kit, marginX + colNomeW + 3, y + rowLineH - 0.8);
+        docPdf.text(nomeLines, marginX + colAssinaturaW + 3, y + rowLineH - 0.8);
+        docPdf.text(item.kit, colKitX + 3, y + rowLineH - 0.8);
 
         y += rowH;
       });
 
       const safeName = String(mod.nome || 'modalidade').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
       docPdf.save(`confirmados-${safeName}-${new Date().toISOString().slice(0, 10)}.pdf`);
-      showAlert('PDF gerado com sucesso.', 'success');
+      if (!silent) showAlert('PDF gerado com sucesso.', 'success');
     } catch (e) {
       console.error(e);
       showAlert('Erro ao gerar o PDF de confirmados.', 'error');
@@ -311,8 +331,14 @@ export default function AdminModalidades() {
       };
 
       const usableW = pageW - marginX * 2;
-      const colNomeW = usableW * 0.5;
-      const colModalidadeW = usableW * 0.27;
+      // Coluna de assinatura em branco na frente - mesmo padrão do PDF por modalidade
+      // individual, pra servir de comprovante físico de entrega do kit.
+      const colAssinaturaW = 34;
+      const colRestante = usableW - colAssinaturaW;
+      const colNomeW = colRestante * 0.5;
+      const colModalidadeW = colRestante * 0.27;
+      const colModalidadeX = marginX + colAssinaturaW + colNomeW;
+      const colKitX = colModalidadeX + colModalidadeW;
       const rowLineH = 5.4;
       const rowPaddingV = 3.4;
 
@@ -324,9 +350,10 @@ export default function AdminModalidades() {
         docPdf.setFont('helvetica', 'bold');
         docPdf.setFontSize(9);
         docPdf.setTextColor(255, 255, 255);
-        docPdf.text('NOME', marginX + 3, y + 6.2);
-        docPdf.text('MODALIDADE', marginX + colNomeW + 3, y + 6.2);
-        docPdf.text('KIT', marginX + colNomeW + colModalidadeW + 3, y + 6.2);
+        docPdf.text('ASSINATURA', marginX + 3, y + 6.2);
+        docPdf.text('NOME', marginX + colAssinaturaW + 3, y + 6.2);
+        docPdf.text('MODALIDADE', colModalidadeX + 3, y + 6.2);
+        docPdf.text('KIT', colKitX + 3, y + 6.2);
         y += 9;
       };
 
@@ -357,9 +384,11 @@ export default function AdminModalidades() {
         docPdf.text('Nenhum inscrito confirmado nessas modalidades ainda.', marginX, y + 6);
       }
 
+      const rowMinH = 12; // altura mínima confortável pra uma assinatura à mão
+
       confirmados.forEach((item, idx) => {
         const nomeLines = docPdf.splitTextToSize(item.nome.toUpperCase(), colNomeW - 6);
-        const rowH = Math.max(1, nomeLines.length) * rowLineH + rowPaddingV;
+        const rowH = Math.max(rowMinH, Math.max(1, nomeLines.length) * rowLineH + rowPaddingV);
 
         if (y + rowH > pageH - marginBottom) {
           newPage();
@@ -370,12 +399,18 @@ export default function AdminModalidades() {
           docPdf.rect(marginX, y, usableW, rowH, 'F');
         }
 
+        docPdf.setDrawColor(226, 232, 240);
+        docPdf.setLineWidth(0.2);
+        docPdf.line(marginX + colAssinaturaW, y, marginX + colAssinaturaW, y + rowH);
+        docPdf.line(colModalidadeX, y, colModalidadeX, y + rowH);
+        docPdf.line(colKitX, y, colKitX, y + rowH);
+
         docPdf.setFont('helvetica', 'normal');
         docPdf.setFontSize(9.5);
         docPdf.setTextColor(...NAVY_PDF);
-        docPdf.text(nomeLines, marginX + 3, y + rowLineH - 0.8);
-        docPdf.text(item.modalidade, marginX + colNomeW + 3, y + rowLineH - 0.8);
-        docPdf.text(item.kit, marginX + colNomeW + colModalidadeW + 3, y + rowLineH - 0.8);
+        docPdf.text(nomeLines, marginX + colAssinaturaW + 3, y + rowLineH - 0.8);
+        docPdf.text(item.modalidade, colModalidadeX + 3, y + rowLineH - 0.8);
+        docPdf.text(item.kit, colKitX + 3, y + rowLineH - 0.8);
 
         y += rowH;
       });
@@ -452,6 +487,63 @@ export default function AdminModalidades() {
     });
   };
 
+  const toggleSelectMod = (id: string) => {
+    setSelectedModIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllMods = () => {
+    setSelectedModIds(prev => prev.size === modalidades.length ? new Set() : new Set(modalidades.map(m => m.id!)));
+  };
+
+  const openKitFilterModal = async () => {
+    if (selectedModIds.size === 0) return;
+    try {
+      const kits = availableKits.length > 0 ? availableKits : await fetchKits();
+      setAvailableKits(kits);
+      // Por padrão todos os kits vêm marcados - o admin só desmarca os que quer excluir.
+      setSelectedKitIds(new Set(kits.map(k => k.id)));
+      setShowKitFilterModal(true);
+    } catch (e) {
+      console.error(e);
+      showAlert('Erro ao carregar kits.', 'error');
+    }
+  };
+
+  const toggleKitId = (kitId: string) => {
+    setSelectedKitIds(prev => {
+      const next = new Set(prev);
+      if (next.has(kitId)) next.delete(kitId); else next.add(kitId);
+      return next;
+    });
+  };
+
+  // Gera um PDF por modalidade selecionada, em sequência (uma por vez, aguardando cada
+  // download terminar antes de iniciar o próximo) - disparar todos de uma vez faz o
+  // navegador bloquear ou perder alguns downloads simultâneos.
+  const confirmBulkGenerate = async () => {
+    const kitFilterIds = Array.from(selectedKitIds);
+    if (kitFilterIds.length === 0) return showAlert('Selecione ao menos um kit.', 'warning');
+    const selecionadas = modalidades.filter(m => selectedModIds.has(m.id!));
+    setShowKitFilterModal(false);
+    setBulkGenerating(true);
+    let ok = 0;
+    for (const mod of selecionadas) {
+      try {
+        await generateModalidadePdf(mod, { kitFilterIds, silent: true });
+        ok++;
+      } catch (e) {
+        console.error(e);
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    setBulkGenerating(false);
+    showAlert(`${ok} de ${selecionadas.length} PDF(s) gerado(s).`, ok === selecionadas.length ? 'success' : 'warning');
+  };
+
   if (loading && modalidades.length === 0) return <AdminPageSkeleton variant="table" />;
 
   return (
@@ -520,10 +612,45 @@ export default function AdminModalidades() {
       {activeTab === 'planilhas' && <PlanilhaGeradorTab modalidades={modalidades} regs={regs} />}
 
       {activeTab === 'modalidades' && (
+      <>
+      {selectedModIds.size > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+          background: '#071A45', color: '#fff', borderRadius: 14, padding: '12px 20px', marginBottom: 14,
+        }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>
+            {selectedModIds.size} modalidade(s) selecionada(s)
+          </span>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={() => setSelectedModIds(new Set())}
+              style={{ background: 'rgba(255,255,255,.1)', border: 'none', color: '#fff', padding: '10px 16px', borderRadius: 10, fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}
+            >
+              Limpar
+            </button>
+            <button
+              onClick={openKitFilterModal}
+              disabled={bulkGenerating}
+              style={{ background: '#6BFF2A', color: '#071A45', border: 'none', padding: '10px 18px', borderRadius: 10, fontWeight: 800, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 8, cursor: bulkGenerating ? 'wait' : 'pointer' }}
+            >
+              <Download size={16} />
+              {bulkGenerating ? 'GERANDO PDFs...' : 'BAIXAR SELECIONADAS'}
+            </button>
+          </div>
+        </div>
+      )}
       <div style={{ background: '#fff', borderRadius: 24, border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
           <thead>
             <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+              <th style={{ padding: '16px 12px 16px 24px', width: 20 }}>
+                <input
+                  type="checkbox"
+                  checked={modalidades.length > 0 && selectedModIds.size === modalidades.length}
+                  onChange={toggleSelectAllMods}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+              </th>
               <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Modalidade</th>
               <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Distância</th>
               <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Abrangência</th>
@@ -534,6 +661,14 @@ export default function AdminModalidades() {
           <tbody>
             {modalidades.map((mod) => (
               <tr key={mod.id} style={{ borderBottom: '1px solid #f1f5f9', transition: '0.2s' }}>
+                <td style={{ padding: '16px 12px 16px 24px' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedModIds.has(mod.id!)}
+                    onChange={() => toggleSelectMod(mod.id!)}
+                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                </td>
                 <td style={{ padding: '16px 24px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ width: 40, height: 40, borderRadius: 10, background: '#eff6ff', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -587,7 +722,7 @@ export default function AdminModalidades() {
             ))}
             {modalidades.length === 0 && (
               <tr>
-                <td colSpan={5} style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                <td colSpan={6} style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
                   Nenhuma modalidade cadastrada.
                 </td>
               </tr>
@@ -595,6 +730,64 @@ export default function AdminModalidades() {
           </tbody>
         </table>
       </div>
+      </>
+      )}
+
+      {/* Modal: escolher kits antes de gerar os PDFs em lote */}
+      {showKitFilterModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 20, maxWidth: 420, width: '100%', padding: 28, maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <h2 style={{ fontSize: '1.1rem', fontWeight: 900, color: '#071A45', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Package size={20} /> Quais kits incluir?
+              </h2>
+              <button onClick={() => setShowKitFilterModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
+                <X size={20} />
+              </button>
+            </div>
+            <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '4px 0 18px' }}>
+              Os PDFs de {selectedModIds.size} modalidade(s) selecionada(s) vão listar só os atletas com os kits marcados abaixo.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 22 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', fontWeight: 800, fontSize: '0.8rem', color: '#071A45', borderBottom: '1px solid #f1f5f9', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={availableKits.length > 0 && selectedKitIds.size === availableKits.length}
+                  onChange={() => setSelectedKitIds(prev => prev.size === availableKits.length ? new Set() : new Set(availableKits.map(k => k.id)))}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+                Selecionar todos
+              </label>
+              {availableKits.map(kit => (
+                <label key={kit.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px', fontSize: '0.85rem', color: '#334155', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedKitIds.has(kit.id)}
+                    onChange={() => toggleKitId(kit.id)}
+                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                  {kit.nome}
+                </label>
+              ))}
+              {availableKits.length === 0 && (
+                <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Nenhum kit cadastrado.</span>
+              )}
+            </div>
+            <button
+              onClick={confirmBulkGenerate}
+              disabled={selectedKitIds.size === 0}
+              style={{
+                width: '100%', background: '#6BFF2A', color: '#071A45', border: 'none', borderRadius: 12,
+                padding: '14px', fontWeight: 900, fontSize: '0.85rem', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', gap: 8, cursor: selectedKitIds.size === 0 ? 'not-allowed' : 'pointer',
+                opacity: selectedKitIds.size === 0 ? 0.5 : 1,
+              }}
+            >
+              <Download size={18} />
+              GERAR {selectedModIds.size} PDF(S)
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Modal for Edit/Create */}

@@ -785,6 +785,99 @@ export default function AdminKits() {
     0,
   );
 
+  // Gera uma imagem PNG da tabela de tamanhos (não um PDF) - mesmo visual do PDF de kits:
+  // header.png no topo, título em Anton, navy/stripe na tabela.
+  const downloadSizeBreakdownImage = async (
+    kitNome: string,
+    groups: { label: string; color: string; items: CamisetaSize[] }[],
+    countsForKit: Record<string, number>,
+    total: number,
+  ) => {
+    const NAVY = '#071A45';
+    const STRIPE = '#f1f5f9';
+    const width = 800;
+    const headerH = Math.round(width / (2172 / 724));
+    const rowH = 34;
+    const groupHeaderH = 30;
+    let contentH = 90; // título + subtítulo
+    groups.forEach(g => { contentH += groupHeaderH + g.items.length * rowH; });
+    contentH += 60; // total
+    const height = headerH + contentH + 24;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+
+    try {
+      const titleFont = new FontFace('Anton', 'url(/fonts/Anton-Regular.ttf)');
+      await titleFont.load();
+      (document as any).fonts.add(titleFont);
+    } catch { /* segue com fonte padrão se falhar */ }
+
+    const headerImg = await new Promise<HTMLImageElement | null>(resolve => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = `/header.png?v=${Date.now()}`;
+    });
+    if (headerImg) ctx.drawImage(headerImg, 0, 0, width, headerH);
+    else { ctx.fillStyle = NAVY; ctx.fillRect(0, 0, width, headerH); }
+
+    let y = headerH + 40;
+    ctx.fillStyle = NAVY;
+    ctx.font = '900 32px Anton, sans-serif';
+    ctx.fillText(`TAMANHOS - ${kitNome.toUpperCase()}`, 24, y);
+    y += 20;
+    ctx.fillStyle = '#64748b';
+    ctx.font = 'italic 14px Arial';
+    ctx.fillText('Confirmados por tamanho de camiseta neste kit.', 24, y);
+    y += 30;
+
+    groups.forEach(group => {
+      ctx.fillStyle = group.color;
+      ctx.font = '900 13px Arial';
+      ctx.fillText(group.label.toUpperCase(), 24, y + 14);
+      y += groupHeaderH;
+
+      group.items.forEach((size, idx) => {
+        if (idx % 2 === 1) {
+          ctx.fillStyle = STRIPE;
+          ctx.fillRect(24, y, width - 48, rowH);
+        }
+        ctx.fillStyle = '#334155';
+        ctx.font = '700 15px Arial';
+        ctx.fillText(size.label, 36, y + rowH / 2 + 5);
+        ctx.fillStyle = NAVY;
+        ctx.font = '900 15px Arial';
+        const countText = String(countsForKit[size.id] || 0);
+        const countW = ctx.measureText(countText).width;
+        ctx.fillText(countText, width - 48 - countW, y + rowH / 2 + 5);
+        y += rowH;
+      });
+    });
+
+    y += 10;
+    ctx.fillStyle = NAVY;
+    ctx.fillRect(24, y, width - 48, 44);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 14px Arial';
+    ctx.fillText('TOTAL', 36, y + 27);
+    ctx.font = '900 20px Arial';
+    const totalText = String(total);
+    const totalW = ctx.measureText(totalText).width;
+    ctx.fillText(totalText, width - 48 - totalW, y + 28);
+
+    const dataUrl = canvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = `tamanhos-${kitNome.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`;
+    link.click();
+  };
+
   return (
     <div style={{ minHeight: '100vh', background: '#f1f5f9', color: '#071A45', padding: '24px 30px' }}>
       {/* Header */}
@@ -1450,9 +1543,17 @@ export default function AdminKits() {
                   ))
                 )}
               </div>
-              <div style={{ padding: '16px 24px', borderTop: '1px solid #f1f5f9', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Total</span>
-                <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#071A45' }}>{total}</span>
+              <div style={{ padding: '16px 24px', borderTop: '1px solid #f1f5f9', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <button
+                  onClick={() => downloadSizeBreakdownImage(sizeBreakdownKit.nome, groups, countsForKit, total)}
+                  style={{ background: '#071A45', border: 'none', padding: '10px 16px', borderRadius: 8, color: '#fff', fontWeight: 800, fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Lucide.Download size={15} /> BAIXAR IMAGEM
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Total</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#071A45' }}>{total}</span>
+                </div>
               </div>
             </div>
           </div>

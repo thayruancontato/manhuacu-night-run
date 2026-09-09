@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, NavLink } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { signOut } from 'firebase/auth';
-import { Home, CreditCard, User, LogOut, Menu, X, MapPin, AlertTriangle } from 'lucide-react';
+import { Home, CreditCard, User, LogOut, Menu, X, MapPin, AlertTriangle, FileSignature } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { auth } from '../firebase';
 import '../App.css';
@@ -9,6 +9,7 @@ import '../App.css';
 const NAV_ITEMS = [
   { to: '/atleta/dashboard', label: 'Início', icon: Home },
   { to: '/atleta/pagamentos', label: 'Pagamentos', icon: CreditCard },
+  { to: '/atleta/retirada-terceiro', label: 'Retirada por Terceiro', icon: FileSignature },
 ];
 
 export default function AtletaLayout() {

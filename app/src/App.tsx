@@ -32,6 +32,7 @@ import AtletaDashboard from './pages/AtletaDashboard';
 import AtletaLogin from './pages/AtletaLogin';
 import AtletaPerfil from './pages/AtletaPerfil';
 import AtletaPagamentos from './pages/AtletaPagamentos';
+import AtletaRetiradaTerceiro from './pages/AtletaRetiradaTerceiro';
 import PaymentPage from './pages/PaymentPage';
 import SuccessPaymentPage from './pages/SuccessPaymentPage';
 import Regulamento from './pages/Regulamento';
@@ -136,6 +137,7 @@ function App() {
                 <Route index element={<Navigate to="dashboard" replace />} />
                 <Route path="dashboard" element={<AtletaDashboard />} />
                 <Route path="pagamentos" element={<AtletaPagamentos />} />
+                <Route path="retirada-terceiro" element={<AtletaRetiradaTerceiro />} />
               </Route>
 
               {/* Fallback */}

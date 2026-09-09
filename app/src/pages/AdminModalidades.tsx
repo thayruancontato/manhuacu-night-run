@@ -648,7 +648,7 @@ export default function AdminModalidades() {
                   type="checkbox"
                   checked={modalidades.length > 0 && selectedModIds.size === modalidades.length}
                   onChange={toggleSelectAllMods}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  style={{ display: 'inline-block', width: 16, height: 16, cursor: 'pointer' }}
                 />
               </th>
               <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Modalidade</th>
@@ -666,7 +666,7 @@ export default function AdminModalidades() {
                     type="checkbox"
                     checked={selectedModIds.has(mod.id!)}
                     onChange={() => toggleSelectMod(mod.id!)}
-                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    style={{ display: 'inline-block', width: 16, height: 16, cursor: 'pointer' }}
                   />
                 </td>
                 <td style={{ padding: '16px 24px' }}>
@@ -754,7 +754,7 @@ export default function AdminModalidades() {
                   type="checkbox"
                   checked={availableKits.length > 0 && selectedKitIds.size === availableKits.length}
                   onChange={() => setSelectedKitIds(prev => prev.size === availableKits.length ? new Set() : new Set(availableKits.map(k => k.id)))}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  style={{ display: 'inline-block', width: 16, height: 16, cursor: 'pointer' }}
                 />
                 Selecionar todos
               </label>
@@ -764,7 +764,7 @@ export default function AdminModalidades() {
                     type="checkbox"
                     checked={selectedKitIds.has(kit.id)}
                     onChange={() => toggleKitId(kit.id)}
-                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    style={{ display: 'inline-block', width: 16, height: 16, cursor: 'pointer' }}
                   />
                   {kit.nome}
                 </label>

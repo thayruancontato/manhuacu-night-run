@@ -252,26 +252,30 @@ export default function AdminModalidades() {
     }
   };
 
-  // Resumo consolidado de todas as modalidades de uma categoria - mesmo padrão visual e
+  // Resumo consolidado de um grupo de modalidades num único PDF - mesmo padrão visual e
   // técnico do PDF de confirmados por kit/modalidade individual (header.png em todas as
   // páginas via alias, título com a fonte Anton em canvas com leve inclinação itálica, texto
-  // explicativo em itálico, tabela com quebra de página segura).
-  const generateCategoriaPdf = async (categoria: 'infantil' | 'adulto') => {
-    const groups = categoria === 'infantil' ? infantilGroups : adultoGroups;
-    if (groups.length === 0) return showAlert(`Nenhuma modalidade ${categoria === 'infantil' ? 'infantil' : 'adulto'} cadastrada.`, 'warning');
-    setGeneratingCategoria(categoria);
+  // explicativo em itálico, tabela com quebra de página segura). Usado tanto pelos botões
+  // "resumo por categoria" (todas as modalidades daquela categoria) quanto pela seleção em
+  // lote na tabela (só as modalidades marcadas pelo admin, ex: só os grupos de Kids).
+  const generateModalidadesGroupPdf = async (
+    mods: Modalidade[],
+    opts: { titulo: string; infoText: string; fileNameBase: string; kitFilterIds?: string[] | null; silent?: boolean }
+  ) => {
+    const { titulo, infoText, fileNameBase, kitFilterIds = null, silent = false } = opts;
     try {
       const kits = await fetchKits();
       const modalidadeNomeById: Record<string, string> = {};
-      groups.forEach(({ mod }) => { modalidadeNomeById[mod.id] = mod.nome; });
+      mods.forEach(mod => { modalidadeNomeById[mod.id!] = mod.nome; });
       // Busca as inscrições direto do Firestore no momento de gerar (mesma regra do PDF de
       // kit) - nunca usa o array `regs` carregado uma vez ao abrir a página, que pode estar
       // desatualizado se o admin editou kit/modalidade de alguém pela ficha nesse meio tempo.
-      const modalidadeIds = groups.map(({ mod }) => mod.id).filter(Boolean) as string[];
+      const modalidadeIds = mods.map(mod => mod.id).filter(Boolean) as string[];
       const snap = await getDocs(query(collection(db, 'nightrun_registrations'), where('modalidadeId', 'in', modalidadeIds)));
       const confirmados = snap.docs
         .map(d => d.data())
         .filter(r => r.paymentStatus === 'pago' || r.kitConfirmado || r.contractStatus === 'confirmado')
+        .filter(r => kitFilterIds === null || kitFilterIds.includes(r.kit || DEFAULT_KIT_ID))
         .map(r => ({ nome: String(r.nome || 'Sem nome'), modalidade: modalidadeNomeById[r.modalidadeId] || '', kit: resolveKitNome(kits, r.kit, 'Kit Único') }))
         .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
@@ -287,7 +291,7 @@ export default function AdminModalidades() {
           .catch(reject);
       });
 
-      const tituloBase = categoria === 'infantil' ? 'RESUMO MODALIDADES INFANTIS' : 'RESUMO MODALIDADES ADULTO';
+      const tituloBase = titulo;
 
       const titleFont = new FontFace('Anton', 'url(/fonts/Anton-Regular.ttf)');
       await titleFont.load();
@@ -364,8 +368,6 @@ export default function AdminModalidades() {
         drawTableHeader();
       };
 
-      const infoText = `Todos os atletas confirmados nas modalidades ${categoria === 'infantil' ? 'infantis' : 'de adulto/adolescente'} estão listados abaixo.`;
-
       drawHeader();
       docPdf.addImage(titleImgData, 'PNG', marginX, y - titleImgH + 3, titleImgW, titleImgH, undefined, 'FAST');
       y += 6;
@@ -415,11 +417,29 @@ export default function AdminModalidades() {
         y += rowH;
       });
 
-      docPdf.save(`resumo-modalidades-${categoria}-${new Date().toISOString().slice(0, 10)}.pdf`);
-      showAlert('PDF de resumo gerado.', 'success');
+      docPdf.save(`${fileNameBase}-${new Date().toISOString().slice(0, 10)}.pdf`);
+      if (!silent) showAlert('PDF de resumo gerado.', 'success');
     } catch (e) {
       console.error(e);
-      showAlert('Erro ao gerar o PDF de resumo.', 'error');
+      if (!silent) showAlert('Erro ao gerar o PDF de resumo.', 'error');
+      throw e;
+    }
+  };
+
+  // Resumo consolidado de todas as modalidades de uma categoria - atalho que sempre inclui
+  // TODAS as modalidades daquela categoria (não só as selecionadas na tabela).
+  const generateCategoriaPdf = async (categoria: 'infantil' | 'adulto') => {
+    const groups = categoria === 'infantil' ? infantilGroups : adultoGroups;
+    if (groups.length === 0) return showAlert(`Nenhuma modalidade ${categoria === 'infantil' ? 'infantil' : 'adulto'} cadastrada.`, 'warning');
+    setGeneratingCategoria(categoria);
+    try {
+      await generateModalidadesGroupPdf(groups.map(g => g.mod), {
+        titulo: categoria === 'infantil' ? 'RESUMO MODALIDADES INFANTIS' : 'RESUMO MODALIDADES ADULTO',
+        infoText: `Todos os atletas confirmados nas modalidades ${categoria === 'infantil' ? 'infantis' : 'de adulto/adolescente'} estão listados abaixo.`,
+        fileNameBase: `resumo-modalidades-${categoria}`,
+      });
+    } catch {
+      // erro já mostrado dentro de generateModalidadesGroupPdf
     } finally {
       setGeneratingCategoria(null);
     }
@@ -521,27 +541,62 @@ export default function AdminModalidades() {
     });
   };
 
-  // Gera um PDF por modalidade selecionada, em sequência (uma por vez, aguardando cada
-  // download terminar antes de iniciar o próximo) - disparar todos de uma vez faz o
-  // navegador bloquear ou perder alguns downloads simultâneos.
+  // Gera os PDFs das modalidades selecionadas em sequência (aguardando cada download
+  // terminar antes de iniciar o próximo - disparar todos de uma vez faz o navegador bloquear
+  // ou perder alguns downloads simultâneos). Quando o admin seleciona mais de uma modalidade
+  // da MESMA categoria (ex: os 4 grupos de Kids), gera UM PDF só combinando todas elas - igual
+  // ao botão "RESUMO MODALIDADES INFANTIS/ADULTO" - em vez de um arquivo separado por
+  // modalidade, já que pra retirada de kit infantil normalmente não faz sentido separar por
+  // faixa etária.
   const confirmBulkGenerate = async () => {
     const kitFilterIds = Array.from(selectedKitIds);
     if (kitFilterIds.length === 0) return showAlert('Selecione ao menos um kit.', 'warning');
     const selecionadas = modalidades.filter(m => selectedModIds.has(m.id!));
     setShowKitFilterModal(false);
     setBulkGenerating(true);
-    let ok = 0;
-    for (const mod of selecionadas) {
-      try {
-        await generateModalidadePdf(mod, { kitFilterIds, silent: true });
-        ok++;
-      } catch (e) {
-        console.error(e);
+
+    const porCategoria: Record<'infantil' | 'adulto', Modalidade[]> = { infantil: [], adulto: [] };
+    selecionadas.forEach(mod => {
+      porCategoria[mod.categoria === 'infantil' ? 'infantil' : 'adulto'].push(mod);
+    });
+
+    let filesGenerated = 0;
+    let filesFailed = 0;
+    for (const categoria of ['infantil', 'adulto'] as const) {
+      const grupo = porCategoria[categoria];
+      if (grupo.length === 0) continue;
+
+      if (grupo.length === 1) {
+        try {
+          await generateModalidadePdf(grupo[0], { kitFilterIds, silent: true });
+          filesGenerated++;
+        } catch (e) {
+          console.error(e);
+          filesFailed++;
+        }
+      } else {
+        try {
+          await generateModalidadesGroupPdf(grupo, {
+            titulo: categoria === 'infantil' ? 'RESUMO MODALIDADES INFANTIS' : 'RESUMO MODALIDADES ADULTO',
+            infoText: `Todos os atletas confirmados nas modalidades ${categoria === 'infantil' ? 'infantis' : 'de adulto/adolescente'} selecionadas estão listados abaixo.`,
+            fileNameBase: `resumo-modalidades-${categoria}`,
+            kitFilterIds,
+            silent: true,
+          });
+          filesGenerated++;
+        } catch (e) {
+          console.error(e);
+          filesFailed++;
+        }
       }
       await new Promise(resolve => setTimeout(resolve, 500));
     }
+
     setBulkGenerating(false);
-    showAlert(`${ok} de ${selecionadas.length} PDF(s) gerado(s).`, ok === selecionadas.length ? 'success' : 'warning');
+    showAlert(
+      `${filesGenerated} PDF(s) gerado(s) para ${selecionadas.length} modalidade(s)${filesFailed ? ` (${filesFailed} com erro)` : ''}.`,
+      filesFailed ? 'warning' : 'success'
+    );
   };
 
   if (loading && modalidades.length === 0) return <AdminPageSkeleton variant="table" />;

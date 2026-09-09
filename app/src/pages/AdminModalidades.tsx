@@ -775,6 +775,35 @@ export default function AdminModalidades() {
                 </td>
               </tr>
             ))}
+            {infantilGroups.length > 1 && (
+              <tr style={{ borderBottom: '1px solid #f1f5f9', background: 'rgba(107,255,42,0.05)' }}>
+                <td style={{ padding: '16px 12px 16px 24px' }} />
+                <td style={{ padding: '16px 24px' }} colSpan={3}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 10, background: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Flag size={20} />
+                    </div>
+                    <div>
+                      <span style={{ fontWeight: 800, color: '#071A45' }}>TODOS OS KIDS</span>
+                      <div style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 600 }}>
+                        Lista combinada das {infantilGroups.length} faixas etárias infantis
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td style={{ padding: '16px 24px' }} />
+                <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                  <button
+                    onClick={() => generateCategoriaPdf('infantil')}
+                    disabled={generatingCategoria === 'infantil'}
+                    title="Gerar PDF combinado de todos os Kids"
+                    style={{ background: '#eafff0', border: 'none', width: 36, height: 36, borderRadius: 10, color: '#16a34a', cursor: generatingCategoria === 'infantil' ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: generatingCategoria === 'infantil' ? 0.6 : 1 }}
+                  >
+                    <FileText size={16} />
+                  </button>
+                </td>
+              </tr>
+            )}
             {modalidades.length === 0 && (
               <tr>
                 <td colSpan={6} style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>

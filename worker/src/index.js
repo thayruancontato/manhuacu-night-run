@@ -497,6 +497,21 @@ export default {
         return json(result, 200);
       }
 
+      // Fallback pra quando a cota de LEITURAS do Firestore esta esgotada - ver comentario
+      // em confirmRegistrationPaymentWriteOnly(). O admin ja tem os dados na tela, entao vao
+      // no corpo da requisicao em vez de reler do banco.
+      const writeOnlyConfirmMatch = path.match(/^\/registrations\/([^/]+)\/confirm-payment-writeonly$/);
+      if (writeOnlyConfirmMatch && request.method === "POST") {
+        const registrationId = decodeURIComponent(writeOnlyConfirmMatch[1]);
+        const body = await request.json().catch(() => ({}));
+        const result = await confirmRegistrationPaymentWriteOnly(env, registrationId, ctx, {
+          nome: body.nome, telefone: body.telefone, euVouCardUrl: body.euVouCardUrl,
+          modalidadeNome: body.modalidadeNome, existingNumeroInscricao: body.existingNumeroInscricao,
+          forceNotify: true,
+        });
+        return json(result, result.success ? 200 : 500);
+      }
+
       const sendCardMatch = path.match(/^\/registrations\/([^/]+)\/send-payment-card$/);
       if (sendCardMatch && request.method === "POST") {
         const registrationId = decodeURIComponent(sendCardMatch[1]);
@@ -2789,6 +2804,67 @@ async function confirmRegistrationPayment(env, paymentId, ctx, options = {}) {
   if (!document) return { found: false, reason: "registration_not_found" };
 
   return confirmRegistrationDocument(env, document, ctx, { ...options, matchedPaymentField: searchResult.matchedField });
+}
+
+// Confirma o pagamento SEM ler o documento antes (so PATCH direto) - existe pra quando a
+// cota diaria de LEITURAS do Firestore esta esgotada (a de ESCRITAS e separada e raramente
+// chega perto do limite). O admin ja tem nome/telefone/euVouCardUrl/numeroInscricao
+// carregados na tela (de uma leitura anterior, bem-sucedida), entao passamos isso no corpo
+// da requisicao em vez de reler do banco. Efeito colateral aceito: nao da pra checar
+// "ja estava pago?" sem ler primeiro, entao o admin so deve usar isso quando o caminho
+// normal falhar com quota_exceeded.
+async function confirmRegistrationPaymentWriteOnly(env, registrationId, ctx, options = {}) {
+  const nome = options.nome || "Atleta";
+  const telefone = options.telefone || "";
+  const euVouCardUrl = options.euVouCardUrl || "";
+  const modalidadeNome = options.modalidadeNome || "";
+  const existingNumeroInscricao = options.existingNumeroInscricao || "";
+
+  const documentName = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${registrationId}`;
+  const maskFields = ["paymentStatus", "updatedAt", "manualPaymentConfirmedAt"];
+  const now = new Date().toISOString();
+  const patchFields = {
+    paymentStatus: { stringValue: "pago" },
+    updatedAt: { timestampValue: now },
+    manualPaymentConfirmedAt: { timestampValue: now },
+  };
+  if (!existingNumeroInscricao) {
+    maskFields.push("numeroInscricao");
+    patchFields.numeroInscricao = { stringValue: String(Math.floor(10000000 + Math.random() * 90000000)) };
+  }
+
+  const updateMask = maskFields.map(f => `updateMask.fieldPaths=${f}`).join("&");
+  const patchRes = await fetch(`https://firestore.googleapis.com/v1/${documentName}?key=${env.FIREBASE_API_KEY}&${updateMask}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: patchFields }),
+  });
+  if (!patchRes.ok) {
+    const errorText = await patchRes.text().catch(() => "");
+    return { found: true, success: false, reason: "firestore_write_error", status: patchRes.status, error: errorText };
+  }
+
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(bumpConfirmedCounterAndMaybeBroadcast(env, ctx));
+  } else {
+    await bumpConfirmedCounterAndMaybeBroadcast(env, ctx);
+  }
+
+  let notifyResult = null;
+  if (!options.skipNotify) {
+    const fakeDocument = {
+      name: documentName,
+      fields: {
+        telefone: { stringValue: telefone },
+        nome: { stringValue: nome },
+        modalidadeNome: { stringValue: modalidadeNome },
+        euVouCardUrl: { stringValue: euVouCardUrl },
+      },
+    };
+    notifyResult = await sendPaymentConfirmationForDocument(env, fakeDocument, ctx, { force: Boolean(options.forceNotify) });
+  }
+
+  return { found: true, success: true, writeOnly: true, notifyResult };
 }
 
 async function confirmRegistrationPaymentById(env, registrationId, ctx, options = {}) {

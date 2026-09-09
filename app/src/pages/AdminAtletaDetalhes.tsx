@@ -334,6 +334,31 @@ export default function AdminAtletaDetalhes() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || data.found === false) {
+        // Se a cota diaria de LEITURAS do Firestore estiver esgotada, a confirmacao normal
+        // (que le o documento antes de gravar) falha - mas ESCRITAS tem cota separada, quase
+        // nunca esgotada. Caimos automaticamente pra um caminho que so escreve, usando os
+        // dados que essa tela ja carregou, sem precisar reler nada do banco.
+        if (data?.reason === 'quota_exceeded') {
+          const fallbackRes = await fetch(`${workerUrl}/registrations/${encodeURIComponent(id!)}/confirm-payment-writeonly`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              nome: reg?.nome,
+              telefone: reg?.telefone,
+              euVouCardUrl: reg?.euVouCardUrl,
+              modalidadeNome: reg?.modalidadeNome || reg?.modalidade,
+              existingNumeroInscricao: reg?.numeroInscricao,
+            })
+          });
+          const fallbackData = await fallbackRes.json().catch(() => null);
+          if (!fallbackRes.ok || !fallbackData?.success) {
+            throw new Error(fallbackData?.reason || fallbackData?.error || 'Erro ao confirmar pagamento.');
+          }
+          const sentFallback = fallbackData.notifyResult?.success === true;
+          showAlert(sentFallback ? 'Pagamento confirmado e mensagem enviada.' : 'Pagamento confirmado. Verifique a conexão do WhatsApp.', sentFallback ? 'success' : 'warning');
+          loadAtleta();
+          return;
+        }
         throw new Error(data.reason || data.error || 'Erro ao confirmar pagamento.');
       }
       const sent = data.notifyResult.success === true;

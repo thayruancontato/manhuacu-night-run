@@ -25,12 +25,11 @@ export default function AdminModalidades() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Partial<Modalidade>>({ nome: '', distancia: '', categoria: 'adulto', anosNascimento: [], ativo: true });
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [generatingId, setGeneratingId] = useState<string | null>(null);
-  const [generatingCategoria, setGeneratingCategoria] = useState<'infantil' | 'adulto' | null>(null);
   const [selectedModIds, setSelectedModIds] = useState<Set<string>>(new Set());
   const [showKitFilterModal, setShowKitFilterModal] = useState(false);
   const [availableKits, setAvailableKits] = useState<KitRecord[]>([]);
   const [selectedKitIds, setSelectedKitIds] = useState<Set<string>>(new Set());
+  const [pendingPdfMods, setPendingPdfMods] = useState<Modalidade[]>([]);
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab: 'modalidades' | 'planilhas' = searchParams.get('tab') === 'planilhas' ? 'planilhas' : 'modalidades';
@@ -89,7 +88,6 @@ export default function AdminModalidades() {
   // tabela com quebra de página segura (altura calculada antes de desenhar, nunca corta nome).
   const generateModalidadePdf = async (mod: Modalidade, options: { kitFilterIds?: string[] | null; silent?: boolean } = {}) => {
     const { kitFilterIds = null, silent = false } = options;
-    setGeneratingId(mod.id!);
     try {
       const kits = await fetchKits();
       // Busca as inscrições direto do Firestore no momento de gerar (não usa o array `regs`
@@ -246,9 +244,8 @@ export default function AdminModalidades() {
       if (!silent) showAlert('PDF gerado com sucesso.', 'success');
     } catch (e) {
       console.error(e);
-      showAlert('Erro ao gerar o PDF de confirmados.', 'error');
-    } finally {
-      setGeneratingId(null);
+      if (!silent) showAlert('Erro ao gerar o PDF de confirmados.', 'error');
+      throw e;
     }
   };
 
@@ -426,25 +423,6 @@ export default function AdminModalidades() {
     }
   };
 
-  // Resumo consolidado de todas as modalidades de uma categoria - atalho que sempre inclui
-  // TODAS as modalidades daquela categoria (não só as selecionadas na tabela).
-  const generateCategoriaPdf = async (categoria: 'infantil' | 'adulto') => {
-    const groups = categoria === 'infantil' ? infantilGroups : adultoGroups;
-    if (groups.length === 0) return showAlert(`Nenhuma modalidade ${categoria === 'infantil' ? 'infantil' : 'adulto'} cadastrada.`, 'warning');
-    setGeneratingCategoria(categoria);
-    try {
-      await generateModalidadesGroupPdf(groups.map(g => g.mod), {
-        titulo: categoria === 'infantil' ? 'RESUMO MODALIDADES INFANTIS' : 'RESUMO MODALIDADES ADULTO',
-        infoText: `Todos os atletas confirmados nas modalidades ${categoria === 'infantil' ? 'infantis' : 'de adulto/adolescente'} estão listados abaixo.`,
-        fileNameBase: `resumo-modalidades-${categoria}`,
-      });
-    } catch {
-      // erro já mostrado dentro de generateModalidadesGroupPdf
-    } finally {
-      setGeneratingCategoria(null);
-    }
-  };
-
   const handleOpenModal = (mod?: Modalidade) => {
     if (mod) {
       setEditingId(mod.id!);
@@ -519,8 +497,26 @@ export default function AdminModalidades() {
     setSelectedModIds(prev => prev.size === modalidades.length ? new Set() : new Set(modalidades.map(m => m.id!)));
   };
 
-  const openKitFilterModal = async () => {
-    if (selectedModIds.size === 0) return;
+  // Linha sintética "TODOS OS KIDS" - marca/desmarca as 4 faixas etárias infantis de uma vez,
+  // pra entrar na seleção em lote junto com as outras modalidades.
+  const kidsIds = infantilGroups.map(({ mod }) => mod.id!);
+  const allKidsSelected = kidsIds.length > 0 && kidsIds.every(id => selectedModIds.has(id));
+  const toggleSelectAllKids = () => {
+    setSelectedModIds(prev => {
+      const next = new Set(prev);
+      if (allKidsSelected) kidsIds.forEach(id => next.delete(id));
+      else kidsIds.forEach(id => next.add(id));
+      return next;
+    });
+  };
+
+  // Ponto de entrada único pra qualquer download de PDF na página - o botão de uma linha só
+  // (1 modalidade), os botões de resumo por categoria (todas as modalidades daquela
+  // categoria), "TODOS OS KIDS" e a seleção em lote da tabela passam todos por aqui, sempre
+  // perguntando quais kits incluir antes de gerar, sem exceção.
+  const openKitFilterModal = async (mods: Modalidade[]) => {
+    if (mods.length === 0) return;
+    setPendingPdfMods(mods);
     try {
       const kits = availableKits.length > 0 ? availableKits : await fetchKits();
       setAvailableKits(kits);
@@ -541,17 +537,16 @@ export default function AdminModalidades() {
     });
   };
 
-  // Gera os PDFs das modalidades selecionadas em sequência (aguardando cada download
-  // terminar antes de iniciar o próximo - disparar todos de uma vez faz o navegador bloquear
-  // ou perder alguns downloads simultâneos). Quando o admin seleciona mais de uma modalidade
-  // da MESMA categoria (ex: os 4 grupos de Kids), gera UM PDF só combinando todas elas - igual
-  // ao botão "RESUMO MODALIDADES INFANTIS/ADULTO" - em vez de um arquivo separado por
-  // modalidade, já que pra retirada de kit infantil normalmente não faz sentido separar por
-  // faixa etária.
+  // Gera os PDFs das modalidades pendentes em sequência (aguardando cada download terminar
+  // antes de iniciar o próximo - disparar todos de uma vez faz o navegador bloquear ou perder
+  // alguns downloads simultâneos). Quando há mais de uma modalidade da MESMA categoria (ex: os
+  // 4 grupos de Kids, ou "TODOS OS KIDS"), gera UM PDF só combinando todas elas - igual ao
+  // botão "RESUMO MODALIDADES INFANTIS/ADULTO" - em vez de um arquivo separado por modalidade,
+  // já que pra retirada de kit infantil normalmente não faz sentido separar por faixa etária.
   const confirmBulkGenerate = async () => {
     const kitFilterIds = Array.from(selectedKitIds);
     if (kitFilterIds.length === 0) return showAlert('Selecione ao menos um kit.', 'warning');
-    const selecionadas = modalidades.filter(m => selectedModIds.has(m.id!));
+    const selecionadas = pendingPdfMods;
     setShowKitFilterModal(false);
     setBulkGenerating(true);
 
@@ -611,20 +606,20 @@ export default function AdminModalidades() {
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <button
-            onClick={() => generateCategoriaPdf('adulto')}
-            disabled={generatingCategoria === 'adulto'}
-            style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+            onClick={() => openKitFilterModal(adultoGroups.map(g => g.mod))}
+            disabled={bulkGenerating}
+            style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: bulkGenerating ? 'wait' : 'pointer' }}
           >
             <FileText size={18} />
-            {generatingCategoria === 'adulto' ? 'GERANDO...' : 'RESUMO MODALIDADES ADULTO (PDF)'}
+            {bulkGenerating ? 'GERANDO...' : 'RESUMO MODALIDADES ADULTO (PDF)'}
           </button>
           <button
-            onClick={() => generateCategoriaPdf('infantil')}
-            disabled={generatingCategoria === 'infantil'}
-            style={{ background: '#6BFF2A', color: '#071A45', border: 'none', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', boxShadow: '0 4px 12px rgba(107,255,42,0.25)' }}
+            onClick={() => openKitFilterModal(infantilGroups.map(g => g.mod))}
+            disabled={bulkGenerating}
+            style={{ background: '#6BFF2A', color: '#071A45', border: 'none', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: bulkGenerating ? 'wait' : 'pointer', boxShadow: '0 4px 12px rgba(107,255,42,0.25)' }}
           >
             <FileText size={18} />
-            {generatingCategoria === 'infantil' ? 'GERANDO...' : 'RESUMO MODALIDADES INFANTIS (PDF)'}
+            {bulkGenerating ? 'GERANDO...' : 'RESUMO MODALIDADES INFANTIS (PDF)'}
           </button>
           <button
             onClick={() => handleOpenModal()}
@@ -684,7 +679,7 @@ export default function AdminModalidades() {
               Limpar
             </button>
             <button
-              onClick={openKitFilterModal}
+              onClick={() => openKitFilterModal(modalidades.filter(m => selectedModIds.has(m.id!)))}
               disabled={bulkGenerating}
               style={{ background: '#6BFF2A', color: '#071A45', border: 'none', padding: '10px 18px', borderRadius: 10, fontWeight: 800, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 8, cursor: bulkGenerating ? 'wait' : 'pointer' }}
             >
@@ -752,10 +747,10 @@ export default function AdminModalidades() {
                 <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                     <button
-                      onClick={() => generateModalidadePdf(mod)}
-                      disabled={generatingId === mod.id}
+                      onClick={() => openKitFilterModal([mod])}
+                      disabled={bulkGenerating}
                       title="Gerar PDF resumo"
-                      style={{ background: '#eafff0', border: 'none', width: 36, height: 36, borderRadius: 10, color: '#16a34a', cursor: generatingId === mod.id ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: generatingId === mod.id ? 0.6 : 1 }}
+                      style={{ background: '#eafff0', border: 'none', width: 36, height: 36, borderRadius: 10, color: '#16a34a', cursor: bulkGenerating ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: bulkGenerating ? 0.6 : 1 }}
                     >
                       <FileText size={16} />
                     </button>
@@ -777,7 +772,14 @@ export default function AdminModalidades() {
             ))}
             {infantilGroups.length > 1 && (
               <tr style={{ borderBottom: '1px solid #f1f5f9', background: 'rgba(107,255,42,0.05)' }}>
-                <td style={{ padding: '16px 12px 16px 24px' }} />
+                <td style={{ padding: '16px 12px 16px 24px' }}>
+                  <input
+                    type="checkbox"
+                    checked={allKidsSelected}
+                    onChange={toggleSelectAllKids}
+                    style={{ display: 'inline-block', width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                </td>
                 <td style={{ padding: '16px 24px' }} colSpan={3}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ width: 40, height: 40, borderRadius: 10, background: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -794,10 +796,10 @@ export default function AdminModalidades() {
                 <td style={{ padding: '16px 24px' }} />
                 <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                   <button
-                    onClick={() => generateCategoriaPdf('infantil')}
-                    disabled={generatingCategoria === 'infantil'}
+                    onClick={() => openKitFilterModal(infantilGroups.map(g => g.mod))}
+                    disabled={bulkGenerating}
                     title="Gerar PDF combinado de todos os Kids"
-                    style={{ background: '#eafff0', border: 'none', width: 36, height: 36, borderRadius: 10, color: '#16a34a', cursor: generatingCategoria === 'infantil' ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: generatingCategoria === 'infantil' ? 0.6 : 1 }}
+                    style={{ background: '#eafff0', border: 'none', width: 36, height: 36, borderRadius: 10, color: '#16a34a', cursor: bulkGenerating ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: bulkGenerating ? 0.6 : 1 }}
                   >
                     <FileText size={16} />
                   </button>
@@ -830,7 +832,7 @@ export default function AdminModalidades() {
               </button>
             </div>
             <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '4px 0 18px' }}>
-              Os PDFs de {selectedModIds.size} modalidade(s) selecionada(s) vão listar só os atletas com os kits marcados abaixo.
+              O PDF de {pendingPdfMods.length} modalidade(s) vai listar só os atletas com os kits marcados abaixo.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 22 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', fontWeight: 800, fontSize: '0.8rem', color: '#071A45', borderBottom: '1px solid #f1f5f9', cursor: 'pointer' }}>
@@ -868,7 +870,7 @@ export default function AdminModalidades() {
               }}
             >
               <Download size={18} />
-              GERAR {selectedModIds.size} PDF(S)
+              GERAR {pendingPdfMods.length} PDF(S)
             </button>
           </div>
         </div>

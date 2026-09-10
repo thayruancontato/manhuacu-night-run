@@ -42,9 +42,15 @@ export const AtletaEditModal: React.FC<AtletaEditModalProps> = ({
           <button className="modal-close" onClick={onClose}>&times;</button>
         </div>
         <div className="atleta-det-modal-body">
-          <div className="modal-field">
-            <label>Nome completo</label>
-            <input type="text" value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} />
+          <div className="modal-row">
+            <div className="modal-field">
+              <label>Nome completo</label>
+              <input type="text" value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} />
+            </div>
+            <div className="modal-field">
+              <label>CPF do atleta</label>
+              <input type="text" value={form.cpf} onChange={e => setForm({...form, cpf: e.target.value})} />
+            </div>
           </div>
           <div className="modal-row">
             <div className="modal-field">

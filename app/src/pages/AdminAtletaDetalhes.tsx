@@ -97,7 +97,7 @@ export default function AdminAtletaDetalhes() {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showZoomPhoto, setShowZoomPhoto] = useState(false);
   const [editForm, setEditForm] = useState({
-    categoria: '', kit: '', tamanhoCamiseta: '', nome: '', email: '', telefone: '',
+    categoria: '', kit: '', tamanhoCamiseta: '', nome: '', email: '', telefone: '', cpf: '',
     dataNascimento: '', sexo: '', modalidadeId: '', condicaoSaude: '', responsavelNome: '', responsavelCpf: ''
   });
   const [saving, setSaving] = useState(false);
@@ -666,6 +666,11 @@ export default function AdminAtletaDetalhes() {
       return age;
     })();
 
+    if (!editForm.cpf || editForm.cpf.replace(/\D/g, '').length !== 11) {
+      showAlert('Informe um CPF válido (11 dígitos) para o atleta.', 'warning');
+      return;
+    }
+
     if (editedAge !== null && editedAge <= 12) {
       if (editForm.responsavelNome.trim().length < 3) {
         showAlert('Informe o nome do responsável pelo atleta.', 'warning');
@@ -750,7 +755,7 @@ export default function AdminAtletaDetalhes() {
           <button onClick={() => {
             setEditForm({
               categoria: reg.categoria || '', kit: reg.kit || '', tamanhoCamiseta: reg.tamanhoCamiseta || '',
-              nome: reg.nome || '', email: reg.email || '', telefone: reg.telefone || '',
+              nome: reg.nome || '', email: reg.email || '', telefone: reg.telefone || '', cpf: reg.cpf || '',
               dataNascimento: reg.dataNascimento || '', sexo: reg.sexo || '',
               modalidadeId: reg.modalidadeId || '',
               condicaoSaude: reg.saude.condicaoSaude || '',

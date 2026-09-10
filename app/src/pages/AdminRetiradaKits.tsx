@@ -41,12 +41,12 @@ export default function AdminRetiradaKits() {
   const [kits, setKits] = useState<KitRecord[]>([]);
   const [camisetas, setCamisetas] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [modo, setModo] = useState<'unica' | 'multipla' | 'historico'>('unica');
+  const [modo, setModo] = useState<'propria' | 'unica_terceiro' | 'multipla_terceiro' | 'historico'>('propria');
   const [terceiroNome, setTerceiroNome] = useState('');
   const [selecionadosMultipla, setSelecionadosMultipla] = useState<Record<string, Reg>>({});
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [processingMultipla, setProcessingMultipla] = useState(false);
-  const [confirmarDuplicado, setConfirmarDuplicado] = useState<Reg | null>(null);
+  const [confirmarDuplicado, setConfirmarDuplicado] = useState<{ reg: Reg; nome: string; terceiro: boolean } | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -166,9 +166,10 @@ export default function AdminRetiradaKits() {
         kitRetiradoPor: nomeRetirante,
         kitRetiradoTerceiro: terceiro,
       });
-      setFeedback({ text: `Kit de ${r.nome.toUpperCase()} registrado como retirado.`, type: 'success' });
+      setFeedback({ text: `Kit de ${r.nome.toUpperCase()} registrado como retirado${terceiro ? ` por ${nomeRetirante.toUpperCase()}` : ''}.`, type: 'success' });
       setConfirmarDuplicado(null);
       setSearch('');
+      if (modo === 'unica_terceiro') setTerceiroNome('');
     } catch (e) {
       console.error(e);
       setFeedback({ text: 'Erro ao registrar retirada. Tente novamente.', type: 'error' });
@@ -177,12 +178,18 @@ export default function AdminRetiradaKits() {
     }
   };
 
-  const handleClickRetirarUnica = (r: Reg) => {
-    if (r.kitRetiradoEm) {
-      setConfirmarDuplicado(r);
+  const handleConfirmarLinha = (r: Reg) => {
+    const terceiro = modo === 'unica_terceiro';
+    if (terceiro && !terceiroNome.trim()) {
+      setFeedback({ text: 'Informe o nome de quem está retirando o kit.', type: 'error' });
       return;
     }
-    registrarRetirada(r, r.nome, false);
+    const nome = terceiro ? terceiroNome.trim() : r.nome;
+    if (r.kitRetiradoEm) {
+      setConfirmarDuplicado({ reg: r, nome, terceiro });
+      return;
+    }
+    registrarRetirada(r, nome, terceiro);
   };
 
   const toggleMultipla = (r: Reg) => {
@@ -248,82 +255,83 @@ export default function AdminRetiradaKits() {
       </header>
 
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px 100px' }}>
-        <div style={{ display: 'flex', gap: 8, background: '#e2e8f0', padding: 5, borderRadius: 14, marginBottom: 20 }}>
-          <button
-            onClick={() => { setModo('unica'); setSelecionadosMultipla({}); }}
-            style={{
-              flex: 1, padding: '14px', borderRadius: 10, border: 'none', fontWeight: 900, fontSize: '0.9rem', cursor: 'pointer',
-              background: modo === 'unica' ? '#fff' : 'transparent', color: modo === 'unica' ? '#071A45' : '#64748b',
-              boxShadow: modo === 'unica' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
-            }}
-          >
-            Retirada individual
-          </button>
-          <button
-            onClick={() => setModo('multipla')}
-            style={{
-              flex: 1, padding: '14px', borderRadius: 10, border: 'none', fontWeight: 900, fontSize: '0.9rem', cursor: 'pointer',
-              background: modo === 'multipla' ? '#fff' : 'transparent', color: modo === 'multipla' ? '#071A45' : '#64748b',
-              boxShadow: modo === 'multipla' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            }}
-          >
-            <Users size={18} /> Retirada múltipla (terceiro)
-          </button>
+        <div style={{ display: 'flex', gap: 6, background: '#e2e8f0', padding: 5, borderRadius: 14, marginBottom: 20, flexWrap: 'wrap' }}>
+          {([
+            { key: 'propria', label: 'Retirada própria', icon: null },
+            { key: 'unica_terceiro', label: 'Única (terceiro)', icon: UserIcon },
+            { key: 'multipla_terceiro', label: 'Múltipla (terceiro)', icon: Users },
+          ] as const).map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => { setModo(tab.key); setSelecionadosMultipla({}); }}
+              style={{
+                flex: '1 1 140px', padding: '14px 10px', borderRadius: 10, border: 'none', fontWeight: 900, fontSize: '0.82rem', cursor: 'pointer',
+                background: modo === tab.key ? '#fff' : 'transparent', color: modo === tab.key ? '#071A45' : '#64748b',
+                boxShadow: modo === tab.key ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}
+            >
+              {tab.icon && <tab.icon size={16} />} {tab.label}
+            </button>
+          ))}
           <button
             onClick={() => setModo('historico')}
             style={{
-              flex: 1, padding: '14px', borderRadius: 10, border: 'none', fontWeight: 900, fontSize: '0.9rem', cursor: 'pointer',
+              flex: '1 1 140px', padding: '14px 10px', borderRadius: 10, border: 'none', fontWeight: 900, fontSize: '0.82rem', cursor: 'pointer',
               background: modo === 'historico' ? '#fff' : 'transparent', color: modo === 'historico' ? '#071A45' : '#64748b',
               boxShadow: modo === 'historico' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
             }}
           >
-            <History size={18} /> Histórico ({regs.filter(r => r.kitRetiradoEm).length})
+            <History size={16} /> Histórico ({regs.filter(r => r.kitRetiradoEm).length})
           </button>
         </div>
 
-        {modo === 'multipla' && (
+        {(modo === 'unica_terceiro' || modo === 'multipla_terceiro') && (
           <div style={{ background: '#fff', borderRadius: 16, padding: 18, marginBottom: 16, border: '2px solid #071A45' }}>
             <label style={{ fontSize: '0.75rem', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>
-              Nome de quem está retirando os kits
+              Nome de quem está retirando {modo === 'multipla_terceiro' ? 'os kits' : 'o kit'}
             </label>
             <input
               value={terceiroNome}
               onChange={e => setTerceiroNome(e.target.value)}
               placeholder="Nome completo da pessoa"
-              style={{ width: '100%', padding: '14px 16px', borderRadius: 10, border: '1px solid #cbd5e1', fontSize: '1rem', marginBottom: 12 }}
+              style={{ width: '100%', padding: '14px 16px', borderRadius: 10, border: '1px solid #cbd5e1', fontSize: '1rem', marginBottom: modo === 'multipla_terceiro' ? 12 : 0 }}
             />
-            {selecionadosArr.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-                {selecionadosArr.map(r => (
-                  <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '10px 14px' }}>
-                    <div>
-                      <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
-                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                        {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
-                        {camisetaInfoDe(r) ? ` · ${camisetaInfoDe(r)!.tamanho} (${camisetaInfoDe(r)!.tipo})` : ''}
+            {modo === 'multipla_terceiro' && (
+              <>
+                {selecionadosArr.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                    {selecionadosArr.map(r => (
+                      <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '10px 14px' }}>
+                        <div>
+                          <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
+                          <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                            {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                            {camisetaInfoDe(r) ? ` · ${camisetaInfoDe(r)!.tamanho} (${camisetaInfoDe(r)!.tipo})` : ''}
+                          </div>
+                        </div>
+                        <button onClick={() => toggleMultipla(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
+                          <X size={18} />
+                        </button>
                       </div>
-                    </div>
-                    <button onClick={() => toggleMultipla(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
-                      <X size={18} />
-                    </button>
+                    ))}
                   </div>
-                ))}
-              </div>
+                )}
+                <button
+                  onClick={confirmarRetiradaMultipla}
+                  disabled={processingMultipla || selecionadosArr.length === 0}
+                  style={{
+                    width: '100%', background: selecionadosArr.length === 0 ? '#cbd5e1' : '#6BFF2A',
+                    color: '#071A45', border: 'none', borderRadius: 12, padding: '16px', fontWeight: 900, fontSize: '1rem',
+                    cursor: selecionadosArr.length === 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  }}
+                >
+                  <CheckCircle2 size={20} />
+                  CONFIRMAR RETIRADA DE {selecionadosArr.length} KIT(S)
+                </button>
+              </>
             )}
-            <button
-              onClick={confirmarRetiradaMultipla}
-              disabled={processingMultipla || selecionadosArr.length === 0}
-              style={{
-                width: '100%', background: selecionadosArr.length === 0 ? '#cbd5e1' : '#6BFF2A',
-                color: '#071A45', border: 'none', borderRadius: 12, padding: '16px', fontWeight: 900, fontSize: '1rem',
-                cursor: selecionadosArr.length === 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              }}
-            >
-              <CheckCircle2 size={20} />
-              CONFIRMAR RETIRADA DE {selecionadosArr.length} KIT(S)
-            </button>
           </div>
         )}
 
@@ -418,9 +426,23 @@ export default function AdminRetiradaKits() {
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'stretch' }}>
-                  {modo === 'unica' ? (
+                  {modo === 'multipla_terceiro' ? (
+                    <label style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer',
+                      background: selecionado ? '#071A45' : '#f1f5f9', color: selecionado ? '#fff' : '#334155',
+                      borderRadius: 10, padding: '12px 18px', fontWeight: 800, fontSize: '0.8rem', whiteSpace: 'nowrap',
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={selecionado}
+                        onChange={() => toggleMultipla(r)}
+                        style={{ display: 'inline-block', width: 18, height: 18, cursor: 'pointer' }}
+                      />
+                      {selecionado ? 'SELECIONADO' : 'MARCAR'}
+                    </label>
+                  ) : (
                     <button
-                      onClick={() => handleClickRetirarUnica(r)}
+                      onClick={() => handleConfirmarLinha(r)}
                       disabled={processingId === r.id}
                       style={{
                         background: jaRetirado ? '#f1f5f9' : '#071A45', color: jaRetirado ? '#64748b' : '#fff',
@@ -429,16 +451,6 @@ export default function AdminRetiradaKits() {
                       }}
                     >
                       {jaRetirado ? 'JÁ RETIRADO' : 'CONFIRMAR RETIRADA'}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => toggleMultipla(r)}
-                      style={{
-                        background: selecionado ? '#071A45' : '#f1f5f9', color: selecionado ? '#fff' : '#334155',
-                        border: 'none', borderRadius: 10, padding: '12px 18px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {selecionado ? 'SELECIONADO' : 'ADICIONAR'}
                     </button>
                   )}
                   <VerDetalhesLink r={r} />
@@ -459,15 +471,15 @@ export default function AdminRetiradaKits() {
             </div>
             <h3 style={{ fontSize: '1.05rem', fontWeight: 900, color: '#071A45', marginBottom: 8 }}>Este kit já foi retirado</h3>
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: 20 }}>
-              O kit de <strong>{confirmarDuplicado.nome.toUpperCase()}</strong> já consta como retirado por{' '}
-              <strong>{(confirmarDuplicado.kitRetiradoPor || confirmarDuplicado.nome).toUpperCase()}</strong>. Confirmar mesmo assim?
+              O kit de <strong>{confirmarDuplicado.reg.nome.toUpperCase()}</strong> já consta como retirado por{' '}
+              <strong>{(confirmarDuplicado.reg.kitRetiradoPor || confirmarDuplicado.reg.nome).toUpperCase()}</strong>. Confirmar mesmo assim?
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setConfirmarDuplicado(null)} style={{ flex: 1, padding: '14px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#fff', fontWeight: 800, cursor: 'pointer' }}>
                 Cancelar
               </button>
               <button
-                onClick={() => registrarRetirada(confirmarDuplicado, confirmarDuplicado.nome, false)}
+                onClick={() => registrarRetirada(confirmarDuplicado.reg, confirmarDuplicado.nome, confirmarDuplicado.terceiro)}
                 style={{ flex: 1, padding: '14px', borderRadius: 10, border: 'none', background: '#d97706', color: '#fff', fontWeight: 800, cursor: 'pointer' }}
               >
                 Confirmar mesmo assim

@@ -58,6 +58,7 @@ import AdminFinanceiroDefinicoes from './pages/AdminFinanceiroDefinicoes';
 import AdminVerificacoesManuais from './pages/AdminVerificacoesManuais';
 import AdminEnderecos from './pages/AdminEnderecos';
 import AdminImprimirFichas from './pages/AdminImprimirFichas';
+import AdminNumeroPeito from './pages/AdminNumeroPeito';
 import AdminComprovanteExemplo from './pages/AdminComprovanteExemplo';
 import AdminPerfilExemploPreview from './pages/AdminPerfilExemploPreview';
 import './App.css';
@@ -123,6 +124,7 @@ function App() {
                 <Route path="verificacoes-manuais" element={<AdminVerificacoesManuais />} />
                 <Route path="enderecos" element={<AdminEnderecos />} />
                 <Route path="imprimir-fichas" element={<AdminImprimirFichas />} />
+                <Route path="numero-peito" element={<AdminNumeroPeito />} />
                 <Route path="comprovante-exemplo" element={<AdminComprovanteExemplo />} />
                 <Route path="mensagens" element={<AdminMensagens />} />
                 <Route path="whatsapp" element={<AdminMensagensConfig />} />

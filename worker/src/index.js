@@ -3448,7 +3448,13 @@ async function getCachedConfirmedRoster(env, { forceRefresh = false } = {}) {
         enderecoPreenchidoEm: f.enderecoPreenchidoEm?.timestampValue || null,
         endereco: f.endereco?.mapValue?.fields
           ? Object.fromEntries(Object.entries(f.endereco.mapValue.fields).map(([k, v]) => [k, v.stringValue ?? v.booleanValue ?? ""]))
-          : null
+          : null,
+        kit: f.kit?.stringValue || "",
+        numeroInscricao: f.numeroInscricao?.stringValue || "",
+        modalidadeNome: f.modalidadeNome?.stringValue || "",
+        kitRetiradoEm: f.kitRetiradoEm?.timestampValue || null,
+        kitRetiradoPor: f.kitRetiradoPor?.stringValue || "",
+        kitSeparadoPara: f.kitSeparadoPara?.stringValue || "",
       };
     })
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));

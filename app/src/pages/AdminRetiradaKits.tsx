@@ -27,11 +27,13 @@ type Reg = {
   kitRetiradoPor?: string;
   kitRetiradoTerceiro?: boolean;
   kitSeparadoPara?: string;
+  kitSeparadoParaCpf?: string;
   kitSeparadoEm?: any;
 };
 
 const onlyDigits = (v: string) => (v || '').toString().replace(/\D/g, '');
 const normalize = (v: string) => (v || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const maskCpfDisplay = (v: string) => onlyDigits(v).replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
 
 // Painel exclusivo pra retirada de kits no dia do evento - separado do painel admin completo
 // de propósito: uma única tela grande, busca no topo, sem menus/abas, pra qualquer voluntário
@@ -729,10 +731,15 @@ export default function AdminRetiradaKits() {
                   Separações pendentes ({separacoesPendentes.length})
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {separacoesPendentes.map(([nome, itens]) => (
+                  {separacoesPendentes.map(([nome, itens]) => {
+                    const cpfTerceiro = itens.find(r => r.kitSeparadoParaCpf)?.kitSeparadoParaCpf;
+                    return (
                     <div key={nome} style={{ background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 12, padding: 14 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <strong style={{ fontSize: '0.9rem', color: '#071A45' }}>{nome.toUpperCase()}</strong>
+                        <div>
+                          <strong style={{ fontSize: '0.9rem', color: '#071A45' }}>{nome.toUpperCase()}</strong>
+                          {cpfTerceiro && <div style={{ fontSize: '0.68rem', color: '#94a3b8', fontWeight: 700 }}>CPF: {maskCpfDisplay(cpfTerceiro)}</div>}
+                        </div>
                         <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#7c3aed' }}>{itens.length} kit(s)</span>
                       </div>
                       <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: 10 }}>
@@ -761,7 +768,8 @@ export default function AdminRetiradaKits() {
                         </button>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

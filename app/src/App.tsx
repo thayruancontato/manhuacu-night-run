@@ -7,6 +7,7 @@ import PublicForm from './pages/PublicForm';
 import Home from './pages/Home';
 import AtletasConfirmados from './pages/AtletasConfirmados';
 import EnderecoAtleta from './pages/EnderecoAtleta';
+import PublicSepararKits from './pages/PublicSepararKits';
 import AdminBateu1000Preview from './pages/AdminBateu1000Preview';
 import AdminRetiradaKits from './pages/AdminRetiradaKits';
 import AdminDashboard from './pages/AdminDashboard';
@@ -76,6 +77,7 @@ function App() {
               <Route path="/" element={<Home />} />
               <Route path="/atletas" element={<AtletasConfirmados />} />
               <Route path="/endereco" element={<EnderecoAtleta />} />
+              <Route path="/retirar-para-outros" element={<PublicSepararKits />} />
               <Route path="/regulamento" element={<Regulamento />} />
               <Route path="/inscricao" element={<ClosedRegistrations />} />
               {/* Link secreto: mesma pagina de inscricao (PublicForm), direto, sem passar pela

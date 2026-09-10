@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { useParams } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { CheckCircle2, GraduationCap, Loader2, Plus, School, Trash2, XCircle } from 'lucide-react';
+import { Camera, CheckCircle2, GraduationCap, Loader2, Plus, School, Trash2, X, XCircle } from 'lucide-react';
 
 type LinkEscolar = {
   codigo: string;
@@ -21,8 +21,6 @@ type Modalidade = {
   ativo?: boolean;
 };
 
-type Camiseta = { id: string; [key: string]: any };
-
 type AlunoForm = {
   nome: string;
   cpf: string;
@@ -33,12 +31,14 @@ type AlunoForm = {
   responsavelCpf: string;
   cidade: string;
   uf: string;
-  tamanhoCamiseta: string;
+  fotoUrl: string;
+  enviandoFoto: boolean;
 };
 
 const ALUNO_VAZIO: AlunoForm = {
   nome: '', cpf: '', dataNascimento: '', sexo: 'M', telefone: '',
-  responsavelNome: '', responsavelCpf: '', cidade: '', uf: '', tamanhoCamiseta: '',
+  responsavelNome: '', responsavelCpf: '', cidade: '', uf: '',
+  fotoUrl: '', enviandoFoto: false,
 };
 
 const onlyDigits = (v: string) => (v || '').replace(/\D/g, '');
@@ -91,8 +91,6 @@ export default function PublicInscricaoEscolar() {
   const [status, setStatus] = useState<'carregando' | 'invalido' | 'esgotado' | 'ok' | 'enviado'>('carregando');
   const [link, setLink] = useState<LinkEscolar | null>(null);
   const [modalidades, setModalidades] = useState<Modalidade[]>([]);
-  const [camisetas, setCamisetas] = useState<Camiseta[]>([]);
-  const [activeKit, setActiveKit] = useState<{ id: string; nome: string } | null>(null);
   const [alunos, setAlunos] = useState<AlunoForm[]>([{ ...ALUNO_VAZIO }]);
   const [aceite, setAceite] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -103,19 +101,14 @@ export default function PublicInscricaoEscolar() {
     (async () => {
       if (!codigo) { setStatus('invalido'); return; }
       try {
-        const [linkSnap, modalidadesSnap, camisetasSnap, kitsSnap] = await Promise.all([
+        const [linkSnap, modalidadesSnap] = await Promise.all([
           getDoc(doc(db, 'nightrun_links_escolares', codigo)),
           getDocs(query(collection(db, 'nightrun_modalidades'), where('ativo', '==', true))),
-          getDocs(collection(db, 'nightrun_camisetas')),
-          getDocs(query(collection(db, 'nightrun_kits'), where('ativo', '==', true))),
         ]);
         if (!linkSnap.exists()) { setStatus('invalido'); return; }
         const linkData = { codigo: linkSnap.id, ...linkSnap.data() } as LinkEscolar;
         setLink(linkData);
         setModalidades(modalidadesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Modalidade)));
-        setCamisetas(camisetasSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-        const kitDoc = kitsSnap.docs[0];
-        if (kitDoc) setActiveKit({ id: kitDoc.id, nome: kitDoc.data().nome || 'Kit' });
         if (!linkData.ativo) { setStatus('invalido'); return; }
         if (linkData.usados >= linkData.maxAlunos) { setStatus('esgotado'); return; }
         setStatus('ok');
@@ -127,8 +120,6 @@ export default function PublicInscricaoEscolar() {
   }, [codigo]);
 
   const vagasRestantes = link ? Math.max(link.maxAlunos - link.usados, 0) : 0;
-  const camisetasInfantis = camisetas.filter(c => c.categoria === 'infantil');
-  const camisetasParaExibir = camisetasInfantis.length > 0 ? camisetasInfantis : camisetas;
 
   const modalidadeParaIdade = (idade: number) => modalidades.find(m =>
     m.categoria === 'infantil' && typeof m.idadeMin === 'number' && typeof m.idadeMax === 'number' &&
@@ -137,6 +128,10 @@ export default function PublicInscricaoEscolar() {
 
   const setAluno = (idx: number, campo: keyof AlunoForm, valor: string) => {
     setAlunos(prev => prev.map((a, i) => i === idx ? { ...a, [campo]: valor } : a));
+  };
+
+  const setAlunoParcial = (idx: number, patch: Partial<AlunoForm>) => {
+    setAlunos(prev => prev.map((a, i) => i === idx ? { ...a, ...patch } : a));
   };
 
   const adicionarAluno = () => {
@@ -148,6 +143,26 @@ export default function PublicInscricaoEscolar() {
     setAlunos(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const enviarFoto = async (idx: number, file: File) => {
+    setAlunoParcial(idx, { enviandoFoto: true });
+    try {
+      const workerUrl = import.meta.env.VITE_WORKER_URL;
+      const form = new FormData();
+      form.append('file', file);
+      form.append('folder', 'nightrun_photos');
+      const res = await fetch(`${workerUrl}/media/upload`, { method: 'POST', body: form });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.url) throw new Error(body.error || 'Falha ao enviar foto.');
+      setAlunoParcial(idx, { fotoUrl: body.url, enviandoFoto: false });
+    } catch (e) {
+      console.error('Erro ao enviar foto do aluno:', e);
+      setErro('Não foi possível enviar a foto. Tente novamente ou continue sem foto.');
+      setAlunoParcial(idx, { enviandoFoto: false });
+    }
+  };
+
+  const removerFoto = (idx: number) => setAlunoParcial(idx, { fotoUrl: '' });
+
   const validar = (): string => {
     if (alunos.length === 0) return 'Adicione pelo menos um aluno.';
     if (alunos.length > vagasRestantes) return `Restam apenas ${vagasRestantes} vaga(s) para esta escola.`;
@@ -155,6 +170,7 @@ export default function PublicInscricaoEscolar() {
     for (let i = 0; i < alunos.length; i++) {
       const a = alunos[i];
       const n = i + 1;
+      if (a.enviandoFoto) return `Aluno ${n}: aguarde o envio da foto terminar.`;
       if (a.nome.trim().length < 3) return `Aluno ${n}: informe o nome completo.`;
       if (!validateCPF(a.cpf)) return `Aluno ${n}: CPF inválido.`;
       const idade = calcularIdade(a.dataNascimento);
@@ -196,9 +212,9 @@ export default function PublicInscricaoEscolar() {
             categoria: 'infantil',
             modalidadeId: modalidade.id,
             modalidadeNome: modalidade.nome,
-            tamanhoCamiseta: a.tamanhoCamiseta || '',
-            kit: activeKit?.id || '',
-            kitNome: activeKit?.nome || '',
+            fotoUrl: a.fotoUrl || '',
+            kit: '',
+            kitNome: 'Sem kit (cortesia escolar)',
             idadeNoCadastro: idade,
             paymentStatus: 'pago',
             gratuito: true,
@@ -301,6 +317,13 @@ export default function PublicInscricaoEscolar() {
           </p>
         </div>
 
+        <div style={{
+          background: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: 12, padding: '12px 16px',
+          marginBottom: 20, fontSize: '0.82rem', color: '#92400e', fontWeight: 700, textAlign: 'center',
+        }}>
+          Esta inscrição é cortesia e NÃO tem item incluso: sem camiseta, sem kit e sem medalha. É apenas o direito de participar da prova.
+        </div>
+
         {alunos.map((a, idx) => (
           <div key={idx} style={{ background: '#fff', borderRadius: 16, padding: 18, marginBottom: 16, border: '1px solid #e2e8f0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -326,22 +349,52 @@ export default function PublicInscricaoEscolar() {
                   <input style={inputStyle} placeholder="dd/mm/aaaa" value={a.dataNascimento} onChange={e => setAluno(idx, 'dataNascimento', maskDate(e.target.value))} />
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div>
-                  <label style={labelStyle}>Sexo</label>
-                  <select style={inputStyle} value={a.sexo} onChange={e => setAluno(idx, 'sexo', e.target.value)}>
-                    <option value="M">Masculino</option>
-                    <option value="F">Feminino</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={labelStyle}>Tamanho da camiseta</label>
-                  <select style={inputStyle} value={a.tamanhoCamiseta} onChange={e => setAluno(idx, 'tamanhoCamiseta', e.target.value)}>
-                    <option value="">Selecione</option>
-                    {camisetasParaExibir.map(c => (
-                      <option key={c.id} value={c.id}>{c.label || c.nome || c.tamanho || c.id}</option>
-                    ))}
-                  </select>
+              <div>
+                <label style={labelStyle}>Sexo</label>
+                <select style={inputStyle} value={a.sexo} onChange={e => setAluno(idx, 'sexo', e.target.value)}>
+                  <option value="M">Masculino</option>
+                  <option value="F">Feminino</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Foto do aluno (opcional)</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {a.fotoUrl ? (
+                    <div style={{ position: 'relative', width: 56, height: 56, flexShrink: 0 }}>
+                      <img src={a.fotoUrl} alt="" style={{ width: 56, height: 56, borderRadius: 10, objectFit: 'cover', border: '1px solid #cbd5e1' }} />
+                      <button
+                        type="button"
+                        onClick={() => removerFoto(idx)}
+                        title="Remover foto"
+                        style={{
+                          position: 'absolute', top: -6, right: -6, background: '#dc2626', color: '#fff', border: 'none',
+                          borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                        }}
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ) : (
+                    <label style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
+                      background: '#f8fafc', border: '1.5px dashed #cbd5e1', borderRadius: 10, padding: '11px 12px',
+                      fontSize: '0.8rem', fontWeight: 700, color: a.enviandoFoto ? '#94a3b8' : '#475569', cursor: a.enviandoFoto ? 'wait' : 'pointer',
+                    }}>
+                      <Camera size={16} />
+                      {a.enviandoFoto ? 'Enviando...' : 'Enviar foto (opcional)'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={a.enviandoFoto}
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (file) enviarFoto(idx, file);
+                        }}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                  )}
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
@@ -405,7 +458,7 @@ export default function PublicInscricaoEscolar() {
         <button
           type="button"
           onClick={enviar}
-          disabled={enviando}
+          disabled={enviando || alunos.some(a => a.enviandoFoto)}
           style={{
             width: '100%', background: enviando ? '#94a3b8' : '#071A45', color: '#fff', border: 'none', borderRadius: 14,
             padding: '16px', fontWeight: 900, fontSize: '0.95rem', cursor: enviando ? 'wait' : 'pointer',

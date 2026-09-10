@@ -26,6 +26,8 @@ type Reg = {
   kitRetiradoEm?: any;
   kitRetiradoPor?: string;
   kitRetiradoTerceiro?: boolean;
+  kitSeparadoPara?: string;
+  kitSeparadoEm?: any;
 };
 
 const onlyDigits = (v: string) => (v || '').toString().replace(/\D/g, '');
@@ -43,9 +45,13 @@ export default function AdminRetiradaKits() {
   const [kits, setKits] = useState<KitRecord[]>([]);
   const [camisetas, setCamisetas] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [modo, setModo] = useState<'propria' | 'unica_terceiro' | 'multipla_terceiro' | 'historico'>('propria');
+  const [modo, setModo] = useState<'propria' | 'unica_terceiro' | 'multipla_terceiro' | 'separar' | 'historico'>('propria');
   const [terceiroNome, setTerceiroNome] = useState('');
   const [selecionadosMultipla, setSelecionadosMultipla] = useState<Record<string, Reg>>({});
+  const [separarNome, setSepararNome] = useState('');
+  const [selecionadosSeparar, setSelecionadosSeparar] = useState<Record<string, Reg>>({});
+  const [processingSeparar, setProcessingSeparar] = useState(false);
+  const [editandoGrupo, setEditandoGrupo] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [processingMultipla, setProcessingMultipla] = useState(false);
   const [confirmarDuplicado, setConfirmarDuplicado] = useState<{ reg: Reg; nome: string; terceiro: boolean } | null>(null);
@@ -445,6 +451,108 @@ export default function AdminRetiradaKits() {
     }
   };
 
+  const toggleSeparar = (r: Reg) => {
+    setSelecionadosSeparar(prev => {
+      const next = { ...prev };
+      if (next[r.id]) delete next[r.id];
+      else next[r.id] = r;
+      return next;
+    });
+  };
+
+  // Grupos de kits deixados separados pra alguém buscar depois - ainda não é uma retirada de
+  // verdade (não mexe em kitRetiradoEm), só marca o kit como reservado sob um nome, pra
+  // agilizar quando a pessoa chegar. Derivado do mesmo onSnapshot dos confirmados.
+  const separacoesPendentes = useMemo(() => {
+    const map = new Map<string, Reg[]>();
+    regs.filter(r => r.kitSeparadoPara && !r.kitRetiradoEm).forEach(r => {
+      const chave = r.kitSeparadoPara!.trim();
+      if (!map.has(chave)) map.set(chave, []);
+      map.get(chave)!.push(r);
+    });
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
+  }, [regs]);
+
+  const editarGrupoSeparacao = (nome: string, itens: Reg[]) => {
+    setSepararNome(nome);
+    setSelecionadosSeparar(Object.fromEntries(itens.map(r => [r.id, r])));
+    setEditandoGrupo(nome);
+    setSearch('');
+  };
+
+  const cancelarEdicaoSeparacao = () => {
+    setEditandoGrupo(null);
+    setSepararNome('');
+    setSelecionadosSeparar({});
+  };
+
+  const confirmarSeparacao = async () => {
+    const nome = separarNome.trim();
+    const idsNovos = Object.keys(selecionadosSeparar);
+    if (!nome) return setFeedback({ text: 'Informe o nome de quem vai buscar os kits.', type: 'error' });
+    if (idsNovos.length === 0) return setFeedback({ text: 'Selecione ao menos um kit pra separar.', type: 'error' });
+    setProcessingSeparar(true);
+    try {
+      // Editando um grupo já existente: quem foi desmarcado da seleção sai da separação
+      // (volta a ficar livre), e o restante é gravado com o nome atual (que pode ter mudado).
+      if (editandoGrupo) {
+        const idsAntigos = regs.filter(r => r.kitSeparadoPara?.trim() === editandoGrupo).map(r => r.id);
+        const removidos = idsAntigos.filter(id => !idsNovos.includes(id));
+        await Promise.all(removidos.map(id => updateDoc(doc(db, 'nightrun_registrations', id), {
+          kitSeparadoPara: deleteField(),
+          kitSeparadoEm: deleteField(),
+        })));
+      }
+      await Promise.all(idsNovos.map(id => updateDoc(doc(db, 'nightrun_registrations', id), {
+        kitSeparadoPara: nome,
+        kitSeparadoEm: serverTimestamp(),
+      })));
+      setFeedback({ text: `${idsNovos.length} kit(s) separado(s) para ${nome.toUpperCase()}.`, type: 'success' });
+      setSelecionadosSeparar({});
+      setSepararNome('');
+      setEditandoGrupo(null);
+      setSearch('');
+    } catch (e) {
+      console.error(e);
+      setFeedback({ text: 'Erro ao separar os kits. Tente novamente.', type: 'error' });
+    } finally {
+      setProcessingSeparar(false);
+    }
+  };
+
+  const apagarSeparacao = async (itens: Reg[]) => {
+    setProcessingSeparar(true);
+    try {
+      await Promise.all(itens.map(r => updateDoc(doc(db, 'nightrun_registrations', r.id), {
+        kitSeparadoPara: deleteField(),
+        kitSeparadoEm: deleteField(),
+      })));
+      setFeedback({ text: 'Separação apagada.', type: 'success' });
+    } catch (e) {
+      console.error(e);
+      setFeedback({ text: 'Erro ao apagar a separação.', type: 'error' });
+    } finally {
+      setProcessingSeparar(false);
+    }
+  };
+
+  const marcarSeparacaoComoPego = async (nome: string, itens: Reg[]) => {
+    setProcessingSeparar(true);
+    try {
+      await Promise.all(itens.map(r => updateDoc(doc(db, 'nightrun_registrations', r.id), {
+        kitRetiradoEm: serverTimestamp(),
+        kitRetiradoPor: nome,
+        kitRetiradoTerceiro: true,
+      })));
+      setFeedback({ text: `${itens.length} kit(s) de ${nome.toUpperCase()} confirmado(s) como retirado(s).`, type: 'success' });
+    } catch (e) {
+      console.error(e);
+      setFeedback({ text: 'Erro ao confirmar a retirada do grupo.', type: 'error' });
+    } finally {
+      setProcessingSeparar(false);
+    }
+  };
+
   const handleLogout = () => {
     signOut(auth).catch(() => {});
     localStorage.removeItem('nightrun_admin_auth');
@@ -480,10 +588,11 @@ export default function AdminRetiradaKits() {
             { key: 'propria', label: 'Retirada própria', icon: null },
             { key: 'unica_terceiro', label: 'Única (terceiro)', icon: UserIcon },
             { key: 'multipla_terceiro', label: 'Múltipla (terceiro)', icon: Users },
+            { key: 'separar', label: 'Separar Kits', icon: Package },
           ] as const).map(tab => (
             <button
               key={tab.key}
-              onClick={() => { setModo(tab.key); setSelecionadosMultipla({}); }}
+              onClick={() => { setModo(tab.key); setSelecionadosMultipla({}); if (tab.key !== 'separar') cancelarEdicaoSeparacao(); }}
               style={{
                 flex: '1 1 140px', padding: '14px 10px', borderRadius: 10, border: 'none', fontWeight: 900, fontSize: '0.82rem', cursor: 'pointer',
                 background: modo === tab.key ? '#fff' : 'transparent', color: modo === tab.key ? '#071A45' : '#64748b',
@@ -556,6 +665,105 @@ export default function AdminRetiradaKits() {
                   CONFIRMAR RETIRADA DE {selecionadosArr.length} KIT(S)
                 </button>
               </>
+            )}
+          </div>
+        )}
+
+        {modo === 'separar' && (
+          <div style={{ background: '#fff', borderRadius: 16, padding: 18, marginBottom: 16, border: '2px solid #7c3aed' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 900, color: '#64748b', textTransform: 'uppercase' }}>
+                {editandoGrupo ? `Editando separação de ${editandoGrupo.toUpperCase()}` : 'Nome de quem vai buscar os kits'}
+              </label>
+              {editandoGrupo && (
+                <button onClick={cancelarEdicaoSeparacao} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 800 }}>
+                  CANCELAR EDIÇÃO
+                </button>
+              )}
+            </div>
+            <input
+              value={separarNome}
+              onChange={e => setSepararNome(e.target.value)}
+              placeholder="Nome completo da pessoa"
+              style={{ width: '100%', padding: '14px 16px', borderRadius: 10, border: '1px solid #cbd5e1', fontSize: '1rem', marginBottom: 12 }}
+            />
+            {Object.values(selecionadosSeparar).length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                {Object.values(selecionadosSeparar).map(r => (
+                  <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between', background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 10, padding: '10px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, overflow: 'hidden', background: '#f3e8ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {r.fotoUrl ? <img src={r.fotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <UserIcon size={18} color="#7c3aed" />}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                          {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                          {camisetaInfoDe(r) ? ` · ${camisetaInfoDe(r)!.tamanho} (${camisetaInfoDe(r)!.tipo})` : ''}
+                        </div>
+                      </div>
+                    </div>
+                    <button onClick={() => toggleSeparar(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', flexShrink: 0 }}>
+                      <X size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={confirmarSeparacao}
+              disabled={processingSeparar || Object.keys(selecionadosSeparar).length === 0}
+              style={{
+                width: '100%', background: Object.keys(selecionadosSeparar).length === 0 ? '#cbd5e1' : '#7c3aed',
+                color: '#fff', border: 'none', borderRadius: 12, padding: '16px', fontWeight: 900, fontSize: '1rem',
+                cursor: Object.keys(selecionadosSeparar).length === 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              <Package size={20} />
+              {editandoGrupo ? 'SALVAR ALTERAÇÕES' : `SEPARAR ${Object.keys(selecionadosSeparar).length} KIT(S)`}
+            </button>
+
+            {separacoesPendentes.length > 0 && (
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #f1f5f9' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 900, color: '#7c3aed', textTransform: 'uppercase', marginBottom: 10 }}>
+                  Separações pendentes ({separacoesPendentes.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {separacoesPendentes.map(([nome, itens]) => (
+                    <div key={nome} style={{ background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 12, padding: 14 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <strong style={{ fontSize: '0.9rem', color: '#071A45' }}>{nome.toUpperCase()}</strong>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#7c3aed' }}>{itens.length} kit(s)</span>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: 10 }}>
+                        {itens.map(r => r.nome.toUpperCase()).join(', ')}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => marcarSeparacaoComoPego(nome, itens)}
+                          disabled={processingSeparar}
+                          style={{ background: '#071A45', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer' }}
+                        >
+                          MARCAR COMO PEGO
+                        </button>
+                        <button
+                          onClick={() => editarGrupoSeparacao(nome, itens)}
+                          style={{ background: '#f1f5f9', color: '#334155', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer' }}
+                        >
+                          EDITAR
+                        </button>
+                        <button
+                          onClick={() => apagarSeparacao(itens)}
+                          disabled={processingSeparar}
+                          style={{ background: '#fef2f2', color: '#dc2626', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer' }}
+                        >
+                          APAGAR
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -670,10 +878,12 @@ export default function AdminRetiradaKits() {
           {results.map(r => {
             const jaRetirado = Boolean(r.kitRetiradoEm);
             const selecionado = Boolean(selecionadosMultipla[r.id]);
+            const separadoSelecionado = Boolean(selecionadosSeparar[r.id]);
+            const jaSeparado = Boolean(r.kitSeparadoPara) && !jaRetirado;
             return (
               <div key={r.id} style={{
                 background: '#fff', borderRadius: 14, padding: 16,
-                border: selecionado ? '2px solid #071A45' : jaRetirado ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+                border: (selecionado || separadoSelecionado) ? '2px solid #071A45' : jaRetirado ? '1px solid #bbf7d0' : jaSeparado ? '1px solid #e9d5ff' : '1px solid #e2e8f0',
                 display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
               }}>
                 <div style={{
@@ -696,6 +906,11 @@ export default function AdminRetiradaKits() {
                       Retirado por {(r.kitRetiradoPor || r.nome).toUpperCase()}{r.kitRetiradoTerceiro ? ' (terceiro)' : ''}
                     </div>
                   )}
+                  {jaSeparado && (
+                    <div style={{ fontSize: '0.72rem', color: '#7c3aed', fontWeight: 700, marginTop: 4 }}>
+                      Separado para {r.kitSeparadoPara!.toUpperCase()}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'stretch' }}>
                   {modo === 'multipla_terceiro' ? (
@@ -711,6 +926,20 @@ export default function AdminRetiradaKits() {
                         style={{ display: 'inline-block', width: 18, height: 18, cursor: 'pointer' }}
                       />
                       {selecionado ? 'SELECIONADO' : 'MARCAR'}
+                    </label>
+                  ) : modo === 'separar' ? (
+                    <label style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer',
+                      background: separadoSelecionado ? '#7c3aed' : '#f1f5f9', color: separadoSelecionado ? '#fff' : '#334155',
+                      borderRadius: 10, padding: '12px 18px', fontWeight: 800, fontSize: '0.8rem', whiteSpace: 'nowrap',
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={separadoSelecionado}
+                        onChange={() => toggleSeparar(r)}
+                        style={{ display: 'inline-block', width: 18, height: 18, cursor: 'pointer' }}
+                      />
+                      {separadoSelecionado ? 'SELECIONADO' : 'MARCAR'}
                     </label>
                   ) : (
                     <button

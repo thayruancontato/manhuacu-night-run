@@ -2,7 +2,7 @@ import {
   Users, DollarSign, BarChart2, Settings, Package,
   MessageSquare, Image as ImageIcon, Download, Home, Shirt, ShieldCheck, Gift,
   Flag, ClipboardList, Building2, Power, SearchCheck, BadgePercent, UsersRound, UserSearch, MapPin,
-  FileText, PackageCheck, Printer
+  FileText, PackageCheck, Printer, GraduationCap
 } from 'lucide-react';
 
 export interface MenuItem {
@@ -30,6 +30,7 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
   { path: '/admin/kits', label: 'Kits e Camisetas', icon: Package },
   { path: '/admin/lotes', label: 'Lotes', icon: ShieldCheck },
   { path: '/admin/cupons', label: 'Cupons de desconto', icon: BadgePercent },
+  { path: '/admin/links-escolares', label: 'Links Escolares (Cortesia)', icon: GraduationCap },
   { path: '/admin/presenca', label: 'Lista de Presença', icon: ClipboardList },
   { path: '/admin/retirada-kits', label: 'Retirada de Kits', icon: PackageCheck },
   { path: '/admin/imprimir-fichas', label: 'Imprimir Fichas', icon: Printer },

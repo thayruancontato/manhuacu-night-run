@@ -5,7 +5,7 @@ import { arrayUnion, collection, doc, getCountFromServer, getDoc, getDocs, incre
 import { db } from '../firebase';
 import {
   Search, Download, Trash2,
-  CheckCircle, Plus, RotateCcw, ChevronLeft, ChevronRight, Gift, Send, Repeat, Ghost
+  CheckCircle, Plus, RotateCcw, ChevronLeft, ChevronRight, Gift, Send, Repeat, Ghost, GraduationCap
 } from 'lucide-react';
 import { type Modalidade } from '../types';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
@@ -566,6 +566,7 @@ export default function AdminInscritos() {
               const isFree = Boolean(r.gratuito);
               const isPaid = r.paymentStatus === 'pago';
               const isFantasma = Boolean(r.pendenciaFantasma);
+              const isEscolar = Boolean(r.tagEscolar);
               const titularidadeTransferida = Boolean(r.titularidadeTransferida);
               const titularidadeRecebida = Boolean(r.titularidadeRecebida);
               const ct = r.createdAt?.toDate?.() || new Date();
@@ -590,9 +591,10 @@ export default function AdminInscritos() {
                       <span className="admin-inscrito-card-placeholder">{String(r.nome || 'AT').slice(0, 2).toUpperCase()}</span>
                     )}
                     <span className={`admin-inscrito-card-badge ${statusClass}`}>{statusLabel}</span>
-                    {(isFree || titularidadeRecebida || titularidadeTransferida || isFantasma) && (
+                    {(isFree || isEscolar || titularidadeRecebida || titularidadeTransferida || isFantasma) && (
                       <div style={{ position: 'absolute', top: 10, left: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
                         {isFree && <span className="admin-inscrito-card-free" style={{ position: 'static' }}><Gift size={12} /> Gratuito</span>}
+                        {isEscolar && <span className="admin-inscrito-card-free" style={{ position: 'static', background: 'rgba(124,58,237,0.92)' }}><GraduationCap size={12} /> Escolar</span>}
                         {titularidadeRecebida && <span className="admin-inscrito-card-free" style={{ position: 'static', background: 'rgba(37,99,235,0.92)' }}><Repeat size={12} /> Titularidade recebida</span>}
                         {titularidadeTransferida && <span className="admin-inscrito-card-free" style={{ position: 'static', background: 'rgba(220,38,38,0.92)' }}><Repeat size={12} /> Titularidade transferida</span>}
                         {isFantasma && <span className="admin-inscrito-card-free" style={{ position: 'static', background: 'rgba(107,33,168,0.92)' }} title="Pagamento ficou preso por falha no webhook e foi confirmado via auditoria bancária"><Ghost size={12} /> Pendência fantasma</span>}

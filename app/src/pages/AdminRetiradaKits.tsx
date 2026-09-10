@@ -31,6 +31,24 @@ type Reg = {
   kitSeparadoEm?: any;
 };
 
+// Mesma programação oficial usada na ficha de impressão em massa (AdminImprimirFichas.tsx) -
+// duplicada aqui pra imprimir a ficha de um atleta direto deste painel, sem sair da página.
+const PROGRAMACAO = [
+  { hora: '13H ÀS 14:30', titulo: 'ABERTURA DO PLAYGROUND', sub: 'Para as crianças e show com Marcela Reis - só para baixinhos!' },
+  { hora: '14:30 ÀS 16:30', titulo: 'CORRIDA KIDS', sub: '' },
+  { hora: '16:30', titulo: 'DJ DUO HORSE', sub: 'Música e animação na arena!' },
+  { hora: '17:30', titulo: 'ATIVAÇÃO + AULÃO', sub: 'Aquecimento e preparação para a largada' },
+  { hora: '18:30', titulo: 'LARGADA OFICIAL', sub: 'Caminhada · Corrida 5 km · Corrida 10 km' },
+  { hora: '19:30', titulo: 'SHOW COM BREDINHO', sub: '' },
+  { hora: '21:00', titulo: 'SHOW COM TATI MEIRA', sub: '' },
+];
+
+const MENSAGEM_MOTIVACIONAL =
+  'Chegou a hora! O grande dia finalmente chegou - sábado, dia 12, Manhuaçu vai parar pra ver ' +
+  'você brilhar. Guarde seu kit com carinho e venha viver uma noite histórica!';
+
+const escapeHtml = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 const onlyDigits = (v: string) => (v || '').toString().replace(/\D/g, '');
 const normalize = (v: string) => (v || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const maskCpfDisplay = (v: string) => onlyDigits(v).replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
@@ -179,24 +197,149 @@ export default function AdminRetiradaKits() {
     </button>
   );
 
-  const ImprimirFichaLink = ({ r }: { r: Reg }) => {
-    if (role !== 'admin') return null;
-    return (
-      <a
-        href={`/admin/imprimir-fichas?atletaId=${r.id}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        title="Imprimir ficha deste atleta"
-        style={{
-          background: '#eff6ff', color: '#2563eb', border: 'none', borderRadius: 10,
-          padding: '10px 12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-          fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap', textDecoration: 'none',
-        }}
-      >
-        <Printer size={14} /> IMPRIMIR
-      </a>
-    );
+  // Abre direto o assistente de impressão nativo do navegador com a ficha desse atleta -
+  // sem navegar pra outra página/aba e sem baixar arquivo nenhum. Monta a ficha num iframe
+  // escondido (com os mesmos dados já carregados neste painel) e chama print() nele; o
+  // iframe some sozinho assim que a impressão é fechada.
+  const imprimirFicha = (r: Reg) => {
+    const d = r as any;
+    const kitDoc = kits.find(k => k.id === r.kit);
+    const kitNome = kitNomeDe(r);
+    const temCamiseta = Boolean(kitDoc?.itens?.some((item: string) => item.toUpperCase().includes('CAMISETA')));
+    const itens: string[] = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens do kit a confirmar.'];
+    const camisetaInfo = camisetaInfoDe(r);
+    const primeiroNome = (r.nome || 'ATLETA').trim().split(/\s+/)[0];
+    const NAVY = '#071A45';
+    const STRIPE = '#f1f5f9';
+
+    const dadosRaw: [string, string][] = [
+      ['Número da inscrição', r.numeroInscricao || ''],
+      ['CPF', r.cpf || ''],
+      ['Data de nascimento', d.dataNascimento ? formatDateBR(d.dataNascimento) : ''],
+      ['Sexo', d.sexo === 'M' ? 'Masculino' : d.sexo === 'F' ? 'Feminino' : ''],
+      ['WhatsApp', r.telefone || ''],
+      ['E-mail', d.email || ''],
+      ['Modalidade', r.modalidadeNome || ''],
+      ['Categoria', r.categoria === 'infantil' ? 'Infantil' : 'Adulto / adolescente'],
+      ['Equipe', d.integranteEquipe === 'sim' ? (d.equipeNome || 'Sim') : 'Não'],
+      ['Kit', kitNome],
+      ['Tamanho da camiseta', temCamiseta && camisetaInfo ? `${camisetaInfo.tamanho} (${camisetaInfo.tipo})` : ''],
+    ];
+    const dados = dadosRaw.filter(([, v]) => v.trim() !== '');
+
+    const dadosRowsHtml = Array.from({ length: Math.ceil(dados.length / 2) }).map((_, rowIdx) => {
+      const left = dados[rowIdx * 2];
+      const right = dados[rowIdx * 2 + 1];
+      const bg = rowIdx % 2 === 1 ? STRIPE : 'transparent';
+      const cell = (label: string, value: string) => `
+        <div>
+          <div style="font-size:0.65rem;font-weight:700;color:#64748b;text-transform:uppercase;">${escapeHtml(label)}</div>
+          <div style="font-size:0.85rem;font-weight:600;">${escapeHtml(value)}</div>
+        </div>`;
+      return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;background:${bg};padding:6px 12px;">
+        ${cell(left[0], left[1])}${right ? cell(right[0], right[1]) : ''}
+      </div>`;
+    }).join('');
+
+    const itensHtml = itens.map(item => `<div style="font-size:0.85rem;padding:2px 0;">• ${escapeHtml(item)}</div>`).join('');
+
+    const programacaoHtml = PROGRAMACAO.map((item, idx) => `
+      <div style="display:flex;gap:10px;padding:6px 12px;background:${idx % 2 === 1 ? STRIPE : 'transparent'};border-bottom:1px solid #e2e8f0;">
+        <div style="width:80px;flex-shrink:0;font-weight:800;font-size:0.75rem;">${escapeHtml(item.hora)}</div>
+        <div>
+          <div style="font-weight:700;font-size:0.78rem;">${escapeHtml(item.titulo)}</div>
+          ${item.sub ? `<div style="font-size:0.68rem;color:#64748b;">${escapeHtml(item.sub)}</div>` : ''}
+        </div>
+      </div>`).join('');
+
+    const fotoHtml = r.fotoUrl
+      ? `<img src="${escapeHtml(r.fotoUrl)}" style="width:100%;height:100%;object-fit:cover;" />`
+      : '';
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>Ficha - ${escapeHtml(r.nome)}</title>
+      <style>
+        @page { size: A4 portrait; margin: 10mm; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: ${NAVY}; }
+      </style>
+      </head><body>
+        <div style="font-weight:900;font-size:1.6rem;text-transform:uppercase;margin-bottom:10px;">
+          ${escapeHtml(primeiroNome)}, seu kit chegou!
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+          <div style="width:90px;height:90px;flex-shrink:0;border:2px solid ${NAVY};overflow:hidden;background:#eff6ff;display:flex;align-items:center;justify-content:center;">
+            ${fotoHtml}
+          </div>
+          <strong style="font-size:1.4rem;line-height:1.2;">${escapeHtml(r.nome.toUpperCase())}</strong>
+        </div>
+        <div style="background:${NAVY};color:#fff;font-weight:800;font-size:0.85rem;padding:8px 12px;">SEUS DADOS E DA PROVA</div>
+        ${dadosRowsHtml}
+        <div style="background:${NAVY};color:#fff;font-weight:800;font-size:0.85rem;padding:8px 12px;margin-top:14px;">ITENS DO SEU KIT (${escapeHtml(kitNome.toUpperCase())})</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:8px 12px;">${itensHtml}</div>
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-top:14px;font-size:0.82rem;font-style:italic;">
+          ${escapeHtml(MENSAGEM_MOTIVACIONAL)}
+        </div>
+        <div style="background:${NAVY};color:#fff;font-weight:800;font-size:0.85rem;padding:8px 12px;margin-top:14px;">PROGRAMAÇÃO DO DIA 12/09 (SÁBADO)</div>
+        ${programacaoHtml}
+        <div style="margin-top:14px;font-size:0.65rem;font-style:italic;color:#94a3b8;">Documento gerado automaticamente pelo sistema MCU Night Run.</div>
+      </body></html>`;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+
+    const cleanup = () => {
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    };
+
+    const doPrint = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (e) {
+        console.error('Erro ao abrir impressão:', e);
+      }
+      setTimeout(cleanup, 1000);
+    };
+
+    iframe.onload = () => {
+      const img = iframe.contentDocument?.querySelector('img');
+      if (img && !(img as HTMLImageElement).complete) {
+        (img as HTMLImageElement).onload = doPrint;
+        (img as HTMLImageElement).onerror = doPrint;
+        setTimeout(doPrint, 1500);
+      } else {
+        setTimeout(doPrint, 150);
+      }
+    };
+
+    const doc2 = iframe.contentDocument || iframe.contentWindow?.document;
+    if (doc2) {
+      doc2.open();
+      doc2.write(html);
+      doc2.close();
+    }
   };
+
+  const ImprimirFichaLink = ({ r }: { r: Reg }) => (
+    <button
+      type="button"
+      onClick={() => imprimirFicha(r)}
+      title="Imprimir ficha deste atleta"
+      style={{
+        background: '#eff6ff', color: '#2563eb', border: 'none', borderRadius: 10,
+        padding: '10px 12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap',
+      }}
+    >
+      <Printer size={14} /> IMPRIMIR
+    </button>
+  );
 
   const registrarRetirada = async (r: Reg, nomeRetirante: string, terceiro: boolean) => {
     setProcessingId(r.id);

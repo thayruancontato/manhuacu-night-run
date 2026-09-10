@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { jsPDF } from 'jspdf';
 import { db } from '../firebase';
@@ -50,6 +51,8 @@ type AthleteRow = {
 };
 
 export default function AdminImprimirFichas() {
+  const [searchParams] = useSearchParams();
+  const atletaId = searchParams.get('atletaId');
   const [athletes, setAthletes] = useState<AthleteRow[]>([]);
   const [kits, setKits] = useState<KitRecord[]>([]);
   const [camisetas, setCamisetas] = useState<any[]>([]);
@@ -67,9 +70,12 @@ export default function AdminImprimirFichas() {
           getDocs(collection(db, 'nightrun_camisetas')),
           getDocs(collection(db, 'nightrun_modalidades')),
         ]);
-        const list = regsSnap.docs
+        let list = regsSnap.docs
           .map(d => ({ id: d.id, ...d.data() } as AthleteRow))
           .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+        // Modo ficha unica: veio direto do painel de retirada de kits pra imprimir a
+        // ficha de um atleta so - filtra pra so ele antes de qualquer outra coisa.
+        if (atletaId) list = list.filter(a => a.id === atletaId);
         setAthletes(list);
         setKits(kitsList);
         setCamisetas(camisetasSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)));
@@ -80,7 +86,7 @@ export default function AdminImprimirFichas() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [atletaId]);
 
   const kitDe = (a: AthleteRow) => kits.find(k => k.id === a.kit);
   const kitNomeDe = (a: AthleteRow) => resolveKitNome(kits, a.kit, 'Kit Único');
@@ -395,7 +401,10 @@ export default function AdminImprimirFichas() {
         docPdf.text('Documento gerado automaticamente pelo sistema MCU Night Run.', marginX, footerY);
       }
 
-      docPdf.save(`fichas-atletas-mcu-night-run-${new Date().toISOString().slice(0, 10)}.pdf`);
+      const fileName = atletaId && athletes[0]
+        ? `ficha-${athletes[0].nome.toLowerCase().replace(/\s+/g, '-')}-mcu-night-run.pdf`
+        : `fichas-atletas-mcu-night-run-${new Date().toISOString().slice(0, 10)}.pdf`;
+      docPdf.save(fileName);
     } catch (e) {
       console.error('Erro ao gerar fichas:', e);
       alert('Erro ao gerar o PDF de fichas. Tente novamente.');
@@ -405,16 +414,34 @@ export default function AdminImprimirFichas() {
     }
   };
 
+  useEffect(() => {
+    if (!loading && atletaId && athletes.length === 1) {
+      generatePdf();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, atletaId, athletes.length]);
+
   if (loading) return <AdminPageSkeleton variant="table" />;
+
+  if (atletaId && athletes.length === 0) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#f1f5f9', color: '#071A45', padding: '24px 30px' }}>
+        <p style={{ color: '#dc2626', fontWeight: 700 }}>Atleta não encontrado ou pagamento não confirmado.</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#f1f5f9', color: '#071A45', padding: '24px 30px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, flexWrap: 'wrap', gap: 20 }}>
         <div>
-          <h1 style={{ fontSize: '1.8rem', fontWeight: 900, color: '#071A45', marginBottom: 4 }}>Imprimir Fichas</h1>
+          <h1 style={{ fontSize: '1.8rem', fontWeight: 900, color: '#071A45', marginBottom: 4 }}>
+            {atletaId ? `Ficha de ${athletes[0]?.nome || ''}` : 'Imprimir Fichas'}
+          </h1>
           <p style={{ color: '#64748b', fontWeight: 500 }}>
-            Uma ficha por atleta confirmado ({athletes.length}), com dados completos, prova/kit, itens do kit,
-            mensagem motivacional e a programação do dia 12/09.
+            {atletaId
+              ? 'Gerando a ficha em PDF deste atleta automaticamente...'
+              : `Uma ficha por atleta confirmado (${athletes.length}), com dados completos, prova/kit, itens do kit, mensagem motivacional e a programação do dia 12/09.`}
           </p>
         </div>
         <button
@@ -427,7 +454,9 @@ export default function AdminImprimirFichas() {
           }}
         >
           <FileDown size={20} />
-          {generating ? `GERANDO... (${progresso.atual}/${progresso.total})` : `BAIXAR PDF COM TODAS (${athletes.length})`}
+          {generating
+            ? `GERANDO... (${progresso.atual}/${progresso.total})`
+            : atletaId ? 'BAIXAR FICHA NOVAMENTE' : `BAIXAR PDF COM TODAS (${athletes.length})`}
         </button>
       </div>
 

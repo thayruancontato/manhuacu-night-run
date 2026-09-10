@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import { getCamisetaShortLabel } from '../utils/camisetaUtils';
 import { formatDateBR } from '../utils/dateUtils';
-import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink, Mail, Phone, MapPin, Flag, Package, HeartPulse, FileDown } from 'lucide-react';
+import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink, Mail, Phone, MapPin, Flag, Package, HeartPulse, FileDown, Printer } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 
@@ -178,6 +178,25 @@ export default function AdminRetiradaKits() {
       <ExternalLink size={14} /> DETALHES
     </button>
   );
+
+  const ImprimirFichaLink = ({ r }: { r: Reg }) => {
+    if (role !== 'admin') return null;
+    return (
+      <a
+        href={`/admin/imprimir-fichas?atletaId=${r.id}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Imprimir ficha deste atleta"
+        style={{
+          background: '#eff6ff', color: '#2563eb', border: 'none', borderRadius: 10,
+          padding: '10px 12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap', textDecoration: 'none',
+        }}
+      >
+        <Printer size={14} /> IMPRIMIR
+      </a>
+    );
+  };
 
   const registrarRetirada = async (r: Reg, nomeRetirante: string, terceiro: boolean) => {
     setProcessingId(r.id);
@@ -878,6 +897,7 @@ export default function AdminRetiradaKits() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
                     <div style={{ fontWeight: 900, color: '#071A45', fontSize: '1rem', whiteSpace: 'nowrap' }}>{hora}</div>
                     <VerDetalhesLink r={r} />
+                    <ImprimirFichaLink r={r} />
                     <button
                       onClick={() => setDesfazerAlvo(r)}
                       style={{
@@ -980,6 +1000,7 @@ export default function AdminRetiradaKits() {
                     </button>
                   )}
                   <VerDetalhesLink r={r} />
+                  <ImprimirFichaLink r={r} />
                 </div>
               </div>
             );

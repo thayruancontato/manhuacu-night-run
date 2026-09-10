@@ -1004,6 +1004,7 @@ export default function AdminRetiradaKits() {
           <RelatorioPendentesBlock
             regs={regs}
             kits={kits}
+            camisetas={camisetas}
             kitNomeDe={kitNomeDe}
             camisetaInfoDe={camisetaInfoDe}
           />
@@ -1386,9 +1387,10 @@ export default function AdminRetiradaKits() {
 // evento (ex: handleExportKitPdf em AdminKits.tsx), so que aqui filtrado por pendencia em
 // vez de por kit. Camiseta so aparece pra quem esta num kit que inclui camiseta (Kit
 // Master) - os demais kits nao tem esse item, entao a coluna fica em branco pra eles.
-function RelatorioPendentesBlock({ regs, kits, kitNomeDe, camisetaInfoDe }: {
+function RelatorioPendentesBlock({ regs, kits, camisetas, kitNomeDe, camisetaInfoDe }: {
   regs: Reg[];
   kits: KitRecord[];
+  camisetas: any[];
   kitNomeDe: (r: Reg) => string;
   camisetaInfoDe: (r: Reg) => { tamanho: string; tipo: string } | null;
 }) {
@@ -1410,6 +1412,120 @@ function RelatorioPendentesBlock({ regs, kits, kitNomeDe, camisetaInfoDe }: {
     const info = camisetaInfoDe(r);
     if (!info) return '';
     return `${info.tamanho} (${info.tipo})`;
+  };
+
+  // Tipo detalhado em 4 grupos (o resumo impresso pede essa granularidade, diferente do
+  // badge/coluna normal que colapsa tudo que e infantil em "Infantil" mesmo sendo baby look).
+  const tipoDetalhadoDe = (r: Reg): string | null => {
+    if (!r.tamanhoCamiseta) return null;
+    const item = camisetas.find(c => c.id === r.tamanhoCamiseta);
+    if (!item) return null;
+    const isBabyLook = item.tipo === 'Baby Look';
+    const isInfantil = item.categoria === 'infantil';
+    if (isInfantil && isBabyLook) return 'Baby Look Infantil';
+    if (isInfantil) return 'Infantil';
+    if (isBabyLook) return 'Baby Look';
+    return 'Normal';
+  };
+
+  const ORDEM_TIPO = ['Normal', 'Baby Look', 'Infantil', 'Baby Look Infantil'];
+
+  const resumo = useMemo(() => {
+    const masterPendentes = pendentes.filter(temCamisetaDe);
+    const extraPendentes = pendentes.filter(r => !temCamisetaDe(r));
+    const grupos = new Map<string, { tipo: string; tamanho: string; qtd: number }>();
+    masterPendentes.forEach(r => {
+      const tipo = tipoDetalhadoDe(r);
+      const info = camisetaInfoDe(r);
+      if (!tipo || !info) return;
+      const key = `${tipo}|${info.tamanho}`;
+      const atual = grupos.get(key);
+      if (atual) atual.qtd += 1;
+      else grupos.set(key, { tipo, tamanho: info.tamanho, qtd: 1 });
+    });
+    const linhas = Array.from(grupos.values()).sort((a, b) => {
+      const ta = ORDEM_TIPO.indexOf(a.tipo);
+      const tb = ORDEM_TIPO.indexOf(b.tipo);
+      if (ta !== tb) return ta - tb;
+      return a.tamanho.localeCompare(b.tamanho, 'pt-BR', { numeric: true });
+    });
+    return {
+      total: pendentes.length,
+      extra: extraPendentes.length,
+      master: masterPendentes.length,
+      masterSemTamanho: masterPendentes.length - linhas.reduce((s, l) => s + l.qtd, 0),
+      linhas,
+    };
+  }, [pendentes, camisetas, kits]);
+
+  // Folha unica de resumo (nao a lista de nomes) - abre direto o dialogo de impressao do
+  // navegador via iframe escondido, mesmo padrao usado no botao IMPRIMIR das fichas.
+  const imprimirResumo = () => {
+    const NAVY = '#071A45';
+    const linhasHtml = resumo.linhas.map(l => `
+      <tr>
+        <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(l.tipo)}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(l.tamanho)}</td>
+        <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:800;">${l.qtd}</td>
+      </tr>`).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>Kits pendentes</title>
+      <style>
+        @page { size: A4 portrait; margin: 14mm; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: ${NAVY}; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; background: ${NAVY}; color: #fff; padding: 8px 10px; font-size: 0.8rem; }
+      </style>
+      </head><body>
+        <h1 style="font-size:1.4rem;margin-bottom:4px;">KITS PENDENTES DE ENTREGA</h1>
+        <p style="color:#64748b;font-size:0.85rem;margin-top:0;">Gerado em ${escapeHtml(new Date().toLocaleString('pt-BR'))}</p>
+        <div style="display:flex;gap:12px;margin:16px 0;">
+          <div style="flex:1;background:#f1f5f9;border-radius:10px;padding:14px;text-align:center;">
+            <div style="font-size:1.8rem;font-weight:900;">${resumo.total}</div>
+            <div style="font-size:0.75rem;color:#64748b;font-weight:700;">TOTAL PENDENTE</div>
+          </div>
+          <div style="flex:1;background:#eff6ff;border-radius:10px;padding:14px;text-align:center;">
+            <div style="font-size:1.8rem;font-weight:900;color:#2563eb;">${resumo.extra}</div>
+            <div style="font-size:0.75rem;color:#64748b;font-weight:700;">EXTRA (SEM CAMISETA)</div>
+          </div>
+          <div style="flex:1;background:#f0fdf4;border-radius:10px;padding:14px;text-align:center;">
+            <div style="font-size:1.8rem;font-weight:900;color:#16a34a;">${resumo.master}</div>
+            <div style="font-size:0.75rem;color:#64748b;font-weight:700;">MASTER (COM CAMISETA)</div>
+          </div>
+        </div>
+        <h2 style="font-size:1rem;margin-bottom:8px;">Kit Master por tamanho</h2>
+        <table>
+          <thead><tr><th>TIPO</th><th>TAMANHO</th><th style="text-align:right;">QTD.</th></tr></thead>
+          <tbody>${linhasHtml || '<tr><td colspan="3" style="padding:10px;color:#94a3b8;">Nenhum kit master pendente.</td></tr>'}</tbody>
+        </table>
+        ${resumo.masterSemTamanho > 0 ? `<p style="margin-top:10px;font-size:0.78rem;color:#b45309;">${resumo.masterSemTamanho} kit(s) master pendente(s) sem tamanho de camiseta cadastrado.</p>` : ''}
+      </body></html>`;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+    const cleanup = () => { if (iframe.parentNode) iframe.parentNode.removeChild(iframe); };
+    iframe.onload = () => setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (e) {
+        console.error('Erro ao abrir impressão do resumo:', e);
+      }
+      setTimeout(cleanup, 1000);
+    }, 150);
+    const doc2 = iframe.contentDocument || iframe.contentWindow?.document;
+    if (doc2) {
+      doc2.open();
+      doc2.write(html);
+      doc2.close();
+    }
   };
 
   const gerarPdf = async () => {
@@ -1557,17 +1673,30 @@ function RelatorioPendentesBlock({ regs, kits, kitNomeDe, camisetaInfoDe }: {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#64748b' }}>{pendentes.length} kit(s) ainda não retirado(s)</span>
-        <button
-          onClick={gerarPdf}
-          disabled={gerando || pendentes.length === 0}
-          style={{
-            background: gerando ? '#94a3b8' : '#071A45', color: '#fff', border: 'none', borderRadius: 10,
-            padding: '10px 16px', fontWeight: 800, fontSize: '0.78rem', cursor: gerando ? 'wait' : 'pointer',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          <FileDown size={14} /> {gerando ? 'GERANDO...' : 'GERAR PDF'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            onClick={imprimirResumo}
+            disabled={pendentes.length === 0}
+            style={{
+              background: '#eff6ff', color: '#2563eb', border: 'none', borderRadius: 10,
+              padding: '10px 16px', fontWeight: 800, fontSize: '0.78rem', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <Printer size={14} /> IMPRIMIR RESUMO
+          </button>
+          <button
+            onClick={gerarPdf}
+            disabled={gerando || pendentes.length === 0}
+            style={{
+              background: gerando ? '#94a3b8' : '#071A45', color: '#fff', border: 'none', borderRadius: 10,
+              padding: '10px 16px', fontWeight: 800, fontSize: '0.78rem', cursor: gerando ? 'wait' : 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <FileDown size={14} /> {gerando ? 'GERANDO...' : 'GERAR PDF'}
+          </button>
+        </div>
       </div>
 
       {pendentes.length === 0 ? (

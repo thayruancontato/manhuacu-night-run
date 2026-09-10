@@ -916,8 +916,24 @@ export default function AdminRetiradaKits() {
                         </div>
                         <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#7c3aed' }}>{itens.length} kit(s)</span>
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: 10 }}>
-                        {itens.map(r => r.nome.toUpperCase()).join(', ')}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+                        {itens.map(r => (
+                          <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>{r.nome.toUpperCase()}</span>
+                            <button
+                              type="button"
+                              onClick={() => imprimirFicha(r)}
+                              title="Imprimir ficha deste atleta"
+                              style={{
+                                background: '#eff6ff', color: '#2563eb', border: 'none', borderRadius: 7,
+                                padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4,
+                                fontWeight: 800, fontSize: '0.65rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                              }}
+                            >
+                              <Printer size={11} /> IMPRIMIR
+                            </button>
+                          </div>
+                        ))}
                       </div>
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <button

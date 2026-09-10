@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { jsPDF } from 'jspdf';
+import { collection, deleteField, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import { getCamisetaShortLabel } from '../utils/camisetaUtils';
 import { formatDateBR } from '../utils/dateUtils';
-import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink, Mail, Phone, MapPin, Flag, Package, HeartPulse } from 'lucide-react';
+import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink, Mail, Phone, MapPin, Flag, Package, HeartPulse, FileDown } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 
@@ -49,6 +50,8 @@ export default function AdminRetiradaKits() {
   const [processingMultipla, setProcessingMultipla] = useState(false);
   const [confirmarDuplicado, setConfirmarDuplicado] = useState<{ reg: Reg; nome: string; terceiro: boolean } | null>(null);
   const [detalhesReg, setDetalhesReg] = useState<Reg | null>(null);
+  const [desfazerAlvo, setDesfazerAlvo] = useState<Reg | null>(null);
+  const [desfazendo, setDesfazendo] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -176,6 +179,214 @@ export default function AdminRetiradaKits() {
       setFeedback({ text: 'Erro ao registrar retirada. Tente novamente.', type: 'error' });
     } finally {
       setProcessingId(null);
+    }
+  };
+
+  const desfazerRetirada = async (r: Reg) => {
+    setDesfazendo(true);
+    try {
+      await updateDoc(doc(db, 'nightrun_registrations', r.id), {
+        kitRetiradoEm: deleteField(),
+        kitRetiradoPor: deleteField(),
+        kitRetiradoTerceiro: deleteField(),
+      });
+      setFeedback({ text: `Retirada de ${r.nome.toUpperCase()} desfeita.`, type: 'success' });
+      setDesfazerAlvo(null);
+    } catch (e) {
+      console.error(e);
+      setFeedback({ text: 'Erro ao desfazer a retirada. Tente novamente.', type: 'error' });
+    } finally {
+      setDesfazendo(false);
+    }
+  };
+
+  const [gerandoPdfHistorico, setGerandoPdfHistorico] = useState(false);
+
+  // PDF do histórico de retiradas - mesmo padrão visual dos PDFs de kit/modalidade
+  // (header.png, título em Anton skewed, tabela navy/stripe com quebra de página segura).
+  // "Inteligente" = agrupado por quem retirou (o próprio atleta primeiro, depois cada
+  // terceiro com os kits que ele levou), em vez de só uma lista corrida por horário.
+  const generateHistoricoPdf = async () => {
+    if (historico.length === 0) return setFeedback({ text: 'Nenhuma retirada pra gerar PDF ainda.', type: 'error' });
+    setGerandoPdfHistorico(true);
+    try {
+      const headerBase64: string = await new Promise((resolve, reject) => {
+        fetch(`/header.png?v=${Date.now()}`, { cache: 'no-store' })
+          .then(res => res.blob())
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Falha ao carregar header.png'));
+            reader.readAsDataURL(blob);
+          })
+          .catch(reject);
+      });
+
+      const titleFont = new FontFace('Anton', 'url(/fonts/Anton-Regular.ttf)');
+      await titleFont.load();
+      (document as any).fonts.add(titleFont);
+      const titleText = 'HISTÓRICO DE RETIRADA DE KITS';
+      const titleCanvas = document.createElement('canvas');
+      const titleCtx = titleCanvas.getContext('2d')!;
+      titleCtx.font = '90px Anton';
+      const titleSkew = 0.22;
+      const titlePadding = 24;
+      const titleTextW = titleCtx.measureText(titleText).width;
+      titleCanvas.width = titleTextW + titleSkew * 100 + titlePadding * 2;
+      titleCanvas.height = 130;
+      titleCtx.font = '90px Anton';
+      titleCtx.setTransform(1, 0, -titleSkew, 1, titlePadding, 92);
+      titleCtx.fillStyle = 'rgb(7, 26, 69)';
+      titleCtx.textBaseline = 'alphabetic';
+      titleCtx.fillText(titleText, 0, 0);
+      const titleImgData = titleCanvas.toDataURL('image/png');
+      const titleImgAspect = titleCanvas.width / titleCanvas.height;
+      const titleImgH = 12;
+      const titleImgW = titleImgH * titleImgAspect;
+
+      const docPdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageW = docPdf.internal.pageSize.getWidth();
+      const pageH = docPdf.internal.pageSize.getHeight();
+      const marginX = 16;
+      const marginBottom = 16;
+      const headerAspect = 2172 / 724;
+      const headerW = pageW;
+      const headerH = headerW / headerAspect;
+      const NAVY: [number, number, number] = [7, 26, 69];
+      const STRIPE: [number, number, number] = [241, 245, 249];
+
+      const drawHeader = () => {
+        try {
+          docPdf.addImage(headerBase64, 'PNG', 0, 0, headerW, headerH, 'historico-pdf-header', 'FAST');
+        } catch {
+          docPdf.setFillColor(...NAVY);
+          docPdf.rect(0, 0, pageW, headerH, 'F');
+        }
+      };
+
+      const usableW = pageW - marginX * 2;
+      const colHoraW = usableW * 0.12;
+      const colNomeW = usableW * 0.36;
+      const colKitW = usableW * 0.28;
+      const colHoraX = marginX;
+      const colNomeX = colHoraX + colHoraW;
+      const colKitX = colNomeX + colNomeW;
+      const colPorX = colKitX + colKitW;
+      const rowLineH = 5.2;
+      const rowPaddingV = 3.2;
+
+      let y = headerH + 10;
+
+      const drawTableHeader = () => {
+        docPdf.setFillColor(...NAVY);
+        docPdf.rect(marginX, y, usableW, 9, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8.5);
+        docPdf.setTextColor(255, 255, 255);
+        docPdf.text('HORA', colHoraX + 3, y + 6.2);
+        docPdf.text('ATLETA', colNomeX + 3, y + 6.2);
+        docPdf.text('KIT', colKitX + 3, y + 6.2);
+        docPdf.text('RETIRADO POR', colPorX + 3, y + 6.2);
+        y += 9;
+      };
+
+      const newPage = () => {
+        docPdf.addPage();
+        drawHeader();
+        y = headerH + 10;
+        drawTableHeader();
+      };
+
+      // Agrupa por quem retirou: primeiro os que retiraram o próprio kit, depois cada
+      // terceiro (ordenado alfabeticamente) com a lista de kits que ele levou - assim o
+      // organizador consegue conferir rapidinho "quem levou quantos kits" sem contar linha
+      // por linha, além do horário de cada retirada.
+      type Item = { data: Date; reg: Reg };
+      const ordenado: Item[] = historico.map(r => ({
+        data: r.kitRetiradoEm?.toDate ? r.kitRetiradoEm.toDate() : new Date(r.kitRetiradoEm),
+        reg: r,
+      })).sort((a, b) => a.data.getTime() - b.data.getTime());
+
+      const proprios = ordenado.filter(i => !i.reg.kitRetiradoTerceiro);
+      const porTerceiro = new Map<string, Item[]>();
+      ordenado.filter(i => i.reg.kitRetiradoTerceiro).forEach(i => {
+        const chave = (i.reg.kitRetiradoPor || 'Não identificado').trim();
+        if (!porTerceiro.has(chave)) porTerceiro.set(chave, []);
+        porTerceiro.get(chave)!.push(i);
+      });
+      const gruposTerceiro = Array.from(porTerceiro.entries()).sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
+
+      const infoText = `${historico.length} kit(s) retirado(s) - ${proprios.length} pelo próprio atleta e ${historico.length - proprios.length} por terceiros, em ${gruposTerceiro.length} grupo(s).`;
+
+      drawHeader();
+      docPdf.addImage(titleImgData, 'PNG', marginX, y - titleImgH + 3, titleImgW, titleImgH, undefined, 'FAST');
+      y += 6;
+      docPdf.setFont('helvetica', 'italic');
+      docPdf.setFontSize(9);
+      docPdf.setTextColor(100, 116, 139);
+      const infoLines = docPdf.splitTextToSize(infoText, usableW);
+      docPdf.text(infoLines, marginX, y);
+      y += infoLines.length * 4.6 + 4;
+
+      const drawSectionTitle = (texto: string) => {
+        if (y + 12 > pageH - marginBottom) newPage();
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(10);
+        docPdf.setTextColor(...NAVY);
+        docPdf.text(texto, marginX, y + 5);
+        y += 9;
+        drawTableHeader();
+      };
+
+      let rowIdx = 0;
+      const drawRow = (item: Item) => {
+        const nomeLines = docPdf.splitTextToSize(item.reg.nome.toUpperCase(), colNomeW - 6);
+        const kitLabel = kitNomeDe(item.reg);
+        const kitLines = docPdf.splitTextToSize(kitLabel, colKitW - 6);
+        const porLabel = (item.reg.kitRetiradoPor || item.reg.nome).toUpperCase();
+        const porLines = docPdf.splitTextToSize(porLabel, usableW - (colPorX - marginX) - 3);
+        const lineCount = Math.max(nomeLines.length, kitLines.length, porLines.length, 1);
+        const rowH = lineCount * rowLineH + rowPaddingV;
+
+        if (y + rowH > pageH - marginBottom) newPage();
+
+        if (rowIdx % 2 === 1) {
+          docPdf.setFillColor(...STRIPE);
+          docPdf.rect(marginX, y, usableW, rowH, 'F');
+        }
+        rowIdx++;
+
+        const hora = Number.isNaN(item.data.getTime()) ? '--:--' : item.data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(9);
+        docPdf.setTextColor(...NAVY);
+        docPdf.text(hora, colHoraX + 3, y + rowLineH - 0.8);
+        docPdf.text(nomeLines, colNomeX + 3, y + rowLineH - 0.8);
+        docPdf.text(kitLines, colKitX + 3, y + rowLineH - 0.8);
+        docPdf.text(porLines, colPorX + 3, y + rowLineH - 0.8);
+
+        y += rowH;
+      };
+
+      if (proprios.length > 0) {
+        drawSectionTitle(`RETIRADA PRÓPRIA (${proprios.length})`);
+        proprios.forEach(drawRow);
+        y += 4;
+      }
+
+      gruposTerceiro.forEach(([nomeTerceiro, itens]) => {
+        drawSectionTitle(`${nomeTerceiro.toUpperCase()} (${itens.length} kit(s))`);
+        itens.forEach(drawRow);
+        y += 4;
+      });
+
+      docPdf.save(`historico-retirada-kits-${new Date().toISOString().slice(0, 10)}.pdf`);
+      setFeedback({ text: 'PDF do histórico gerado.', type: 'success' });
+    } catch (e) {
+      console.error(e);
+      setFeedback({ text: 'Erro ao gerar o PDF do histórico.', type: 'error' });
+    } finally {
+      setGerandoPdfHistorico(false);
     }
   };
 
@@ -364,6 +575,17 @@ export default function AdminRetiradaKits() {
 
         {modo === 'historico' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <button
+              onClick={generateHistoricoPdf}
+              disabled={gerandoPdfHistorico || historico.length === 0}
+              style={{
+                alignSelf: 'flex-end', background: historico.length === 0 ? '#cbd5e1' : '#071A45', color: '#fff',
+                border: 'none', borderRadius: 10, padding: '12px 18px', fontWeight: 800, fontSize: '0.8rem',
+                display: 'flex', alignItems: 'center', gap: 8, cursor: historico.length === 0 ? 'not-allowed' : 'pointer', marginBottom: 4,
+              }}
+            >
+              <FileDown size={16} /> {gerandoPdfHistorico ? 'GERANDO PDF...' : 'GERAR PDF DO HISTÓRICO'}
+            </button>
             {historico.length === 0 && (
               <p style={{ textAlign: 'center', color: '#94a3b8', padding: '20px 0' }}>Nenhuma retirada registrada ainda.</p>
             )}
@@ -389,6 +611,16 @@ export default function AdminRetiradaKits() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
                     <div style={{ fontWeight: 900, color: '#071A45', fontSize: '1rem', whiteSpace: 'nowrap' }}>{hora}</div>
                     <VerDetalhesLink r={r} />
+                    <button
+                      onClick={() => setDesfazerAlvo(r)}
+                      style={{
+                        background: '#fef2f2', color: '#dc2626', border: 'none', borderRadius: 10,
+                        padding: '10px 12px', display: 'inline-flex', alignItems: 'center', gap: 6,
+                        fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <X size={14} /> DESFAZER
+                    </button>
                   </div>
                 </div>
               );
@@ -489,6 +721,32 @@ export default function AdminRetiradaKits() {
                 style={{ flex: 1, padding: '14px', borderRadius: 10, border: 'none', background: '#d97706', color: '#fff', fontWeight: 800, cursor: 'pointer' }}
               >
                 Confirmar mesmo assim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {desfazerAlvo && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 20, maxWidth: 380, width: '100%', padding: 28, textAlign: 'center' }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+              <AlertTriangle size={28} color="#dc2626" />
+            </div>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 900, color: '#071A45', marginBottom: 8 }}>Desfazer esta retirada</h3>
+            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: 20 }}>
+              O kit de <strong>{desfazerAlvo.nome.toUpperCase()}</strong> vai voltar a aparecer como pendente. Tem certeza?
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setDesfazerAlvo(null)} style={{ flex: 1, padding: '14px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#fff', fontWeight: 800, cursor: 'pointer' }}>
+                Cancelar
+              </button>
+              <button
+                onClick={() => desfazerRetirada(desfazerAlvo)}
+                disabled={desfazendo}
+                style={{ flex: 1, padding: '14px', borderRadius: 10, border: 'none', background: '#dc2626', color: '#fff', fontWeight: 800, cursor: desfazendo ? 'wait' : 'pointer' }}
+              >
+                {desfazendo ? 'Desfazendo...' : 'Desfazer retirada'}
               </button>
             </div>
           </div>

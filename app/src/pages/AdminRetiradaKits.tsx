@@ -84,9 +84,28 @@ export default function AdminRetiradaKits() {
   const [filtroKitId, setFiltroKitId] = useState('');
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  // Relatório diário oculto - só aparece com Ctrl+' (nenhum botão visível normalmente),
+  // pensado pra organização checar o dia sem expor esse controle pros voluntários que usam
+  // este painel no dia a dia.
+  const [relatorioOcultoVisivel, setRelatorioOcultoVisivel] = useState(false);
+  const [mostrarModalRelatorioDiario, setMostrarModalRelatorioDiario] = useState(false);
+  const [dataRelatorioDiario, setDataRelatorioDiario] = useState(() => new Date().toISOString().slice(0, 10));
+  const [gerandoRelatorioDiario, setGerandoRelatorioDiario] = useState(false);
+
   useEffect(() => {
     if (!authLoading && (!user || role !== 'admin' && role !== 'staff_kits')) navigate('/admin/login');
   }, [user, role, authLoading, navigate]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === "'") {
+        e.preventDefault();
+        setRelatorioOcultoVisivel(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   useEffect(() => {
     fetchKits().then(setKits).catch(() => {});
@@ -608,6 +627,313 @@ export default function AdminRetiradaKits() {
       setFeedback({ text: 'Erro ao registrar as retiradas. Tente novamente.', type: 'error' });
     } finally {
       setProcessingMultipla(false);
+    }
+  };
+
+  // Mesmo agrupamento em 4 tipos usado no resumo impresso de pendentes (Normal/Baby Look/
+  // Infantil/Baby Look Infantil) - duplicado aqui porque o relatório diário oculto monta o
+  // PDF inteiro nesta função, sem depender do componente RelatorioPendentesBlock.
+  const tipoDetalhadoDe = (r: Reg): string | null => {
+    if (!r.tamanhoCamiseta) return null;
+    const item = camisetas.find(c => c.id === r.tamanhoCamiseta);
+    if (!item) return null;
+    const isBabyLook = item.tipo === 'Baby Look';
+    const isInfantil = item.categoria === 'infantil';
+    if (isInfantil && isBabyLook) return 'Baby Look Infantil';
+    if (isInfantil) return 'Infantil';
+    if (isBabyLook) return 'Baby Look';
+    return 'Normal';
+  };
+
+  const ORDEM_TIPO_CAMISETA = ['Normal', 'Baby Look', 'Infantil', 'Baby Look Infantil'];
+
+  // Relatório diário oculto (Ctrl+') - PDF completo com retiradas do dia escolhido, gráfico
+  // por horário, top 3 de quem mais retirou de uma vez, resumo de pendentes e (se
+  // configurado) o total de leituras do Firestore no dia via worker (usado como aproximação
+  // de acessos ao site, já que o projeto não tem analytics próprio).
+  const gerarRelatorioDiarioPdf = async (dataStr: string) => {
+    setGerandoRelatorioDiario(true);
+    try {
+      const [ano, mes, diaNum] = dataStr.split('-').map(Number);
+      const inicioDia = new Date(ano, mes - 1, diaNum, 0, 0, 0, 0).getTime();
+      const fimDia = new Date(ano, mes - 1, diaNum, 23, 59, 59, 999).getTime();
+      const dataLabel = `${String(diaNum).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`;
+
+      const retiradasDoDia = regs
+        .filter(r => r.kitRetiradoEm)
+        .filter(r => {
+          const t = toMillis(r.kitRetiradoEm);
+          return t >= inicioDia && t <= fimDia;
+        })
+        .sort((a, b) => toMillis(a.kitRetiradoEm) - toMillis(b.kitRetiradoEm));
+
+      const pendentesAtuais = regs.filter(r => !r.kitRetiradoEm);
+
+      // Gráfico por horário (0-23h)
+      const porHora = new Array(24).fill(0);
+      retiradasDoDia.forEach(r => {
+        const h = new Date(toMillis(r.kitRetiradoEm)).getHours();
+        porHora[h] += 1;
+      });
+      const picoQtd = Math.max(0, ...porHora);
+
+      // Top 3 pessoas que mais retiraram kits de uma vez só (mesmo instante de retirada em
+      // lote = mesma pessoa, mesmo "kitRetiradoPor"/nome, contado pra esse dia).
+      const porPessoa = new Map<string, number>();
+      retiradasDoDia.forEach(r => {
+        const chave = (r.kitRetiradoPor || r.nome).trim().toUpperCase();
+        porPessoa.set(chave, (porPessoa.get(chave) || 0) + 1);
+      });
+      const top3 = Array.from(porPessoa.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3);
+
+      // Resumo de kits pendentes (extra x master, master por tipo/tamanho)
+      const temCamisetaDe = (r: Reg) => {
+        const kitDoc = kits.find(k => k.id === r.kit);
+        return Boolean(kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA')));
+      };
+      const masterPendentes = pendentesAtuais.filter(temCamisetaDe);
+      const extraPendentes = pendentesAtuais.filter(r => !temCamisetaDe(r));
+      const gruposTamanho = new Map<string, { tipo: string; tamanho: string; qtd: number }>();
+      masterPendentes.forEach(r => {
+        const tipo = tipoDetalhadoDe(r);
+        const info = camisetaInfoDe(r);
+        if (!tipo || !info) return;
+        const key = `${tipo}|${info.tamanho}`;
+        const atual = gruposTamanho.get(key);
+        if (atual) atual.qtd += 1;
+        else gruposTamanho.set(key, { tipo, tamanho: info.tamanho, qtd: 1 });
+      });
+      const linhasTamanho = Array.from(gruposTamanho.values()).sort((a, b) => {
+        const ta = ORDEM_TIPO_CAMISETA.indexOf(a.tipo);
+        const tb = ORDEM_TIPO_CAMISETA.indexOf(b.tipo);
+        if (ta !== tb) return ta - tb;
+        return a.tamanho.localeCompare(b.tamanho, 'pt-BR', { numeric: true });
+      });
+
+      // Acessos ao site (aproximado pelas leituras do Firestore no dia) - opcional, some
+      // silenciosamente se o worker não tiver a credencial do Google Cloud configurada.
+      let acessosSite: number | null = null;
+      try {
+        const workerUrl = import.meta.env.VITE_WORKER_URL;
+        const res = await fetch(`${workerUrl}/analytics/site-visits?date=${dataStr}`);
+        const body = await res.json().catch(() => ({}));
+        if (typeof body.count === 'number') acessosSite = body.count;
+      } catch (e) {
+        console.error('Erro ao buscar acessos ao site:', e);
+      }
+
+      const headerBase64: string = await new Promise((resolve, reject) => {
+        fetch(`/header.png?v=${Date.now()}`, { cache: 'no-store' })
+          .then(res => res.blob())
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Falha ao carregar header.png'));
+            reader.readAsDataURL(blob);
+          })
+          .catch(reject);
+      });
+
+      const titleFont = new FontFace('Anton', 'url(/fonts/Anton-Regular.ttf)');
+      await titleFont.load();
+      (document as any).fonts.add(titleFont);
+      const titleText = `RELATÓRIO DIÁRIO — ${dataLabel}`;
+      const titleCanvas = document.createElement('canvas');
+      const titleCtx = titleCanvas.getContext('2d')!;
+      titleCtx.font = '90px Anton';
+      const titleSkew = 0.22;
+      const titlePadding = 24;
+      const titleTextW = titleCtx.measureText(titleText).width;
+      titleCanvas.width = titleTextW + titleSkew * 100 + titlePadding * 2;
+      titleCanvas.height = 130;
+      titleCtx.font = '90px Anton';
+      titleCtx.setTransform(1, 0, -titleSkew, 1, titlePadding, 92);
+      titleCtx.fillStyle = 'rgb(7, 26, 69)';
+      titleCtx.textBaseline = 'alphabetic';
+      titleCtx.fillText(titleText, 0, 0);
+      const titleImgData = titleCanvas.toDataURL('image/png');
+      const titleImgAspect = titleCanvas.width / titleCanvas.height;
+      const titleImgH = 11;
+      const titleImgW = titleImgH * titleImgAspect;
+
+      const docPdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageW = docPdf.internal.pageSize.getWidth();
+      const pageH = docPdf.internal.pageSize.getHeight();
+      const marginX = 15;
+      const marginBottom = 15;
+      const headerAspect = 2172 / 724;
+      const headerW = pageW;
+      const headerH = headerW / headerAspect;
+      const usableW = pageW - marginX * 2;
+      const NAVY: [number, number, number] = [7, 26, 69];
+      const GREEN: [number, number, number] = [107, 255, 42];
+      const STRIPE: [number, number, number] = [241, 245, 249];
+
+      const drawHeader = () => {
+        try {
+          docPdf.addImage(headerBase64, 'PNG', 0, 0, headerW, headerH, 'relatorio-diario-pdf-header', 'FAST');
+        } catch {
+          docPdf.setFillColor(...NAVY);
+          docPdf.rect(0, 0, pageW, headerH, 'F');
+        }
+      };
+
+      let y = 0;
+      const newPage = () => {
+        docPdf.addPage();
+        drawHeader();
+        y = headerH + 10;
+      };
+      const ensureSpace = (needed: number) => {
+        if (y + needed > pageH - marginBottom) newPage();
+      };
+
+      const drawSectionTitle = (text: string) => {
+        ensureSpace(9);
+        docPdf.setFillColor(...NAVY);
+        docPdf.rect(marginX, y, usableW, 7, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8.5);
+        docPdf.setTextColor(255, 255, 255);
+        docPdf.text(text, marginX + 3, y + 5);
+        y += 10;
+      };
+
+      drawHeader();
+      y = headerH + 10;
+      docPdf.addImage(titleImgData, 'PNG', marginX, y - titleImgH + 3, titleImgW, titleImgH, undefined, 'FAST');
+      y += 8;
+
+      // KPIs
+      const kpis = [
+        { label: 'RETIRADAS NO DIA', valor: String(retiradasDoDia.length) },
+        { label: 'PENDENTES NO MOMENTO', valor: String(pendentesAtuais.length) },
+        { label: 'ACESSOS AO SITE', valor: acessosSite === null ? 'INDISPONÍVEL' : String(acessosSite) },
+      ];
+      const kpiW = (usableW - 12) / 3;
+      kpis.forEach((kpi, idx) => {
+        const kpiX = marginX + idx * (kpiW + 6);
+        docPdf.setFillColor(...STRIPE);
+        docPdf.roundedRect(kpiX, y, kpiW, 20, 2, 2, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(16);
+        docPdf.setTextColor(...NAVY);
+        docPdf.text(kpi.valor, kpiX + kpiW / 2, y + 10, { align: 'center' });
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(6.5);
+        docPdf.setTextColor(100, 116, 139);
+        docPdf.text(kpi.label, kpiX + kpiW / 2, y + 16, { align: 'center' });
+      });
+      y += 26;
+
+      // Gráfico de retiradas por horário
+      drawSectionTitle('RETIRADAS POR HORÁRIO (PICOS EM DESTAQUE)');
+      const chartH = 42;
+      ensureSpace(chartH + 10);
+      const chartY = y;
+      const barGap = 1.2;
+      const barW = (usableW - barGap * 23) / 24;
+      const maxBarH = chartH - 8;
+      docPdf.setDrawColor(226, 232, 240);
+      docPdf.setLineWidth(0.2);
+      docPdf.line(marginX, chartY + maxBarH, marginX + usableW, chartY + maxBarH);
+      porHora.forEach((qtd, hora) => {
+        const barH = picoQtd > 0 ? (qtd / picoQtd) * maxBarH : 0;
+        const barX = marginX + hora * (barW + barGap);
+        const isPico = qtd === picoQtd && qtd > 0;
+        docPdf.setFillColor(...(isPico ? GREEN : NAVY));
+        if (barH > 0) docPdf.rect(barX, chartY + maxBarH - barH, barW, barH, 'F');
+        if (hora % 2 === 0) {
+          docPdf.setFont('helvetica', 'normal');
+          docPdf.setFontSize(5.5);
+          docPdf.setTextColor(100, 116, 139);
+          docPdf.text(`${hora}h`, barX + barW / 2, chartY + maxBarH + 4, { align: 'center' });
+        }
+      });
+      y = chartY + chartH + 4;
+
+      // Top 3 pessoas
+      drawSectionTitle('TOP 3 - QUEM MAIS RETIROU KITS DE UMA VEZ NESTE DIA');
+      if (top3.length === 0) {
+        docPdf.setFont('helvetica', 'italic');
+        docPdf.setFontSize(9);
+        docPdf.setTextColor(100, 116, 139);
+        ensureSpace(8);
+        docPdf.text('Nenhuma retirada registrada neste dia.', marginX, y + 5);
+        y += 10;
+      } else {
+        top3.forEach(([nomePessoa, qtd], idx) => {
+          ensureSpace(9);
+          if (idx % 2 === 1) {
+            docPdf.setFillColor(...STRIPE);
+            docPdf.rect(marginX, y, usableW, 8, 'F');
+          }
+          docPdf.setFont('helvetica', 'bold');
+          docPdf.setFontSize(9);
+          docPdf.setTextColor(...NAVY);
+          docPdf.text(`${idx + 1}º`, marginX + 3, y + 5.5);
+          docPdf.text(nomePessoa, marginX + 14, y + 5.5);
+          docPdf.setTextColor(22, 101, 52);
+          docPdf.text(`${qtd} kit(s)`, marginX + usableW - 3, y + 5.5, { align: 'right' });
+          y += 8;
+        });
+        y += 3;
+      }
+
+      // Resumo de pendentes
+      drawSectionTitle(`RESUMO DE KITS PENDENTES (EXTRA: ${extraPendentes.length} · MASTER: ${masterPendentes.length})`);
+      if (linhasTamanho.length === 0) {
+        docPdf.setFont('helvetica', 'italic');
+        docPdf.setFontSize(9);
+        docPdf.setTextColor(100, 116, 139);
+        ensureSpace(8);
+        docPdf.text('Nenhum kit master pendente com tamanho cadastrado.', marginX, y + 5);
+        y += 10;
+      } else {
+        ensureSpace(8);
+        docPdf.setFillColor(...NAVY);
+        docPdf.rect(marginX, y, usableW, 7, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(7.5);
+        docPdf.setTextColor(255, 255, 255);
+        docPdf.text('TIPO', marginX + 3, y + 5);
+        docPdf.text('TAMANHO', marginX + usableW * 0.45, y + 5);
+        docPdf.text('QTD.', marginX + usableW - 3, y + 5, { align: 'right' });
+        y += 7;
+        linhasTamanho.forEach((linha, idx) => {
+          ensureSpace(7.5);
+          if (idx % 2 === 1) {
+            docPdf.setFillColor(...STRIPE);
+            docPdf.rect(marginX, y, usableW, 7.5, 'F');
+          }
+          docPdf.setFont('helvetica', 'normal');
+          docPdf.setFontSize(8.5);
+          docPdf.setTextColor(...NAVY);
+          docPdf.text(linha.tipo, marginX + 3, y + 5.2);
+          docPdf.text(linha.tamanho, marginX + usableW * 0.45, y + 5.2);
+          docPdf.setFont('helvetica', 'bold');
+          docPdf.text(String(linha.qtd), marginX + usableW - 3, y + 5.2, { align: 'right' });
+          y += 7.5;
+        });
+      }
+      y += 4;
+
+      docPdf.setFont('helvetica', 'italic');
+      docPdf.setFontSize(6.5);
+      docPdf.setTextColor(148, 163, 184);
+      ensureSpace(6);
+      docPdf.text('Documento gerado automaticamente pelo sistema MCU Night Run.', marginX, y + 3);
+
+      docPdf.save(`relatorio-diario-${dataStr}.pdf`);
+      setFeedback({ text: 'Relatório diário gerado.', type: 'success' });
+      setMostrarModalRelatorioDiario(false);
+    } catch (e) {
+      console.error('Erro ao gerar relatório diário:', e);
+      setFeedback({ text: 'Erro ao gerar o relatório. Tente novamente.', type: 'error' });
+    } finally {
+      setGerandoRelatorioDiario(false);
     }
   };
 
@@ -1231,6 +1557,55 @@ export default function AdminRetiradaKits() {
                 style={{ flex: 1, padding: '14px', borderRadius: 10, border: 'none', background: '#dc2626', color: '#fff', fontWeight: 800, cursor: desfazendo ? 'wait' : 'pointer' }}
               >
                 {desfazendo ? 'Desfazendo...' : 'Desfazer retirada'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {relatorioOcultoVisivel && !mostrarModalRelatorioDiario && (
+        <button
+          onClick={() => setMostrarModalRelatorioDiario(true)}
+          title="Relatório diário (Ctrl+' pra esconder de novo)"
+          style={{
+            position: 'fixed', bottom: 16, left: 16, zIndex: 999, background: '#071A45', color: '#fff',
+            border: 'none', borderRadius: 12, padding: '10px 16px', fontWeight: 800, fontSize: '0.72rem',
+            cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', gap: 8,
+          }}
+        >
+          <FileText size={14} /> RELATÓRIO DIÁRIO
+        </button>
+      )}
+
+      {mostrarModalRelatorioDiario && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 20, maxWidth: 380, width: '100%', padding: 28 }}>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 900, color: '#071A45', marginBottom: 4 }}>Relatório diário</h3>
+            <p style={{ color: '#64748b', fontSize: '0.82rem', marginBottom: 18 }}>
+              Escolha o dia. O PDF sai no mesmo padrão visual dos outros relatórios do evento.
+            </p>
+            <label style={{ fontSize: '0.72rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+              Data
+            </label>
+            <input
+              type="date"
+              value={dataRelatorioDiario}
+              onChange={e => setDataRelatorioDiario(e.target.value)}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '2px solid #071A45', fontSize: '0.9rem', boxSizing: 'border-box', marginBottom: 20 }}
+            />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setMostrarModalRelatorioDiario(false)}
+                style={{ flex: 1, padding: '14px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#fff', fontWeight: 800, cursor: 'pointer' }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => gerarRelatorioDiarioPdf(dataRelatorioDiario)}
+                disabled={gerandoRelatorioDiario || !dataRelatorioDiario}
+                style={{ flex: 1, padding: '14px', borderRadius: 10, border: 'none', background: '#071A45', color: '#fff', fontWeight: 800, cursor: gerandoRelatorioDiario ? 'wait' : 'pointer' }}
+              >
+                {gerandoRelatorioDiario ? 'Gerando...' : 'Gerar PDF'}
               </button>
             </div>
           </div>

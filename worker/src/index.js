@@ -924,6 +924,20 @@ export default {
         return json(allLite);
       }
 
+      if (cleanPath === "/analytics/site-visits" && request.method === "GET") {
+        const dateStr = url.searchParams.get("date");
+        if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+          return json({ error: "Parametro 'date' invalido (use YYYY-MM-DD)." }, 400);
+        }
+        try {
+          const count = await getFirestoreReadCountForDate(env, dateStr);
+          return json({ date: dateStr, count });
+        } catch (e) {
+          console.error("[Analytics] site-visits error", { dateStr, message: e.message });
+          return json({ date: dateStr, count: null, error: e.message });
+        }
+      }
+
       if (cleanPath === "/thousand/banner-preview" && request.method === "GET") {
         const roster = await fetchConfirmedRosterForBroadcast(env);
         const png = await generateThousandCelebrationBannerPng(env, roster);
@@ -1246,6 +1260,112 @@ function getCoraFetcher(env) {
 // Cora pra esse endpoint - e como a autenticação falhava, a checagem de pagamento também
 // falhava silenciosamente ("bankError: Falha ao autenticar na Cora"), deixando pagamentos já
 // aprovados presos como "pendente" no sistema por horas até alguém verificar manualmente.
+// "Acessos ao site" no relatorio diario (oculto) do painel de retirada de kits usa a
+// contagem de LEITURAS do Firestore no dia como proxy - nao existe analytics de verdade no
+// projeto, mas cada leitura do Firestore corresponde (bem de perto) a alguem abrindo alguma
+// pagina publica que consulta o banco. A metrica vem da API do Google Cloud Monitoring
+// (Cloud Monitoring / Stackdriver), autenticada via JWT assinado com a chave da service
+// account (RS256 via Web Crypto, sem precisar de nenhuma lib externa - o runtime do Worker
+// ja suporta crypto.subtle nativamente).
+const base64UrlEncode = (bytes) => {
+  let binary = '';
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+
+async function getGoogleAccessToken(env) {
+  if (!env.GCP_SERVICE_ACCOUNT_KEY) throw new Error("GCP_SERVICE_ACCOUNT_KEY nao configurado.");
+
+  if (env.NIGHTRUN_STORAGE) {
+    const cached = await env.NIGHTRUN_STORAGE.get("gcp:access-token");
+    if (cached) return cached;
+  }
+
+  const creds = JSON.parse(env.GCP_SERVICE_ACCOUNT_KEY);
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "RS256", typ: "JWT" };
+  const claims = {
+    iss: creds.client_email,
+    scope: "https://www.googleapis.com/auth/monitoring.read",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  };
+  const enc = new TextEncoder();
+  const unsigned = `${base64UrlEncode(enc.encode(JSON.stringify(header)))}.${base64UrlEncode(enc.encode(JSON.stringify(claims)))}`;
+
+  const pemBody = creds.private_key
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/\s+/g, "");
+  const binaryDer = Uint8Array.from(atob(pemBody), c => c.charCodeAt(0));
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    binaryDer.buffer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signatureBuffer = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, enc.encode(unsigned));
+  const jwt = `${unsigned}.${base64UrlEncode(signatureBuffer)}`;
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt,
+    }),
+  });
+  const tokenData = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok || !tokenData.access_token) {
+    throw new Error(tokenData.error_description || tokenData.error || "Falha ao autenticar no Google Cloud.");
+  }
+
+  if (env.NIGHTRUN_STORAGE) {
+    const ttl = Math.max(60, Number(tokenData.expires_in || 3600) - 60);
+    await env.NIGHTRUN_STORAGE.put("gcp:access-token", tokenData.access_token, { expirationTtl: ttl });
+  }
+
+  return tokenData.access_token;
+}
+
+async function getFirestoreReadCountForDate(env, dateStr) {
+  const accessToken = await getGoogleAccessToken(env);
+  const projectId = env.FIREBASE_PROJECT_ID;
+
+  const startTime = `${dateStr}T00:00:00Z`;
+  const endDate = new Date(`${dateStr}T00:00:00Z`);
+  endDate.setUTCDate(endDate.getUTCDate() + 1);
+  const endTime = endDate.toISOString();
+
+  const filter = 'metric.type="firestore.googleapis.com/document/read_count"';
+  const params = new URLSearchParams({
+    filter,
+    "interval.startTime": startTime,
+    "interval.endTime": endTime,
+    "aggregation.alignmentPeriod": "86400s",
+    "aggregation.perSeriesAligner": "ALIGN_SUM",
+    "aggregation.crossSeriesReducer": "REDUCE_SUM",
+  });
+  const url = `https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries?${params.toString()}`;
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error?.message || "Falha ao consultar metricas do Google Cloud.");
+  }
+
+  let total = 0;
+  for (const series of data.timeSeries || []) {
+    for (const point of series.points || []) {
+      total += Number(point.value?.int64Value ?? point.value?.doubleValue ?? 0);
+    }
+  }
+  return total;
+}
+
 async function getCoraAccessToken(env) {
   if (!env.CORA_CLIENT_ID) throw new Error("CORA_CLIENT_ID nao configurado.");
 

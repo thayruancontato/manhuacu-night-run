@@ -206,7 +206,6 @@ export default function AdminRetiradaKits() {
     const kitDoc = kits.find(k => k.id === r.kit);
     const kitNome = kitNomeDe(r);
     const temCamiseta = Boolean(kitDoc?.itens?.some((item: string) => item.toUpperCase().includes('CAMISETA')));
-    const itens: string[] = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens do kit a confirmar.'];
     const camisetaInfo = camisetaInfoDe(r);
     const primeiroNome = (r.nome || 'ATLETA').trim().split(/\s+/)[0];
     const NAVY = '#071A45';
@@ -241,8 +240,6 @@ export default function AdminRetiradaKits() {
       </div>`;
     }).join('');
 
-    const itensHtml = itens.map(item => `<div style="font-size:0.85rem;padding:2px 0;">• ${escapeHtml(item)}</div>`).join('');
-
     const programacaoHtml = PROGRAMACAO.map((item, idx) => `
       <div style="display:flex;gap:10px;padding:6px 12px;background:${idx % 2 === 1 ? STRIPE : 'transparent'};border-bottom:1px solid #e2e8f0;">
         <div style="width:80px;flex-shrink:0;font-weight:800;font-size:0.75rem;">${escapeHtml(item.hora)}</div>
@@ -274,8 +271,6 @@ export default function AdminRetiradaKits() {
         </div>
         <div style="background:${NAVY};color:#fff;font-weight:800;font-size:0.85rem;padding:8px 12px;">SEUS DADOS E DA PROVA</div>
         ${dadosRowsHtml}
-        <div style="background:${NAVY};color:#fff;font-weight:800;font-size:0.85rem;padding:8px 12px;margin-top:14px;">ITENS DO SEU KIT (${escapeHtml(kitNome.toUpperCase())})</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:8px 12px;">${itensHtml}</div>
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-top:14px;font-size:0.82rem;font-style:italic;">
           ${escapeHtml(MENSAGEM_MOTIVACIONAL)}
         </div>

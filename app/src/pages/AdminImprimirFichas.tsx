@@ -300,36 +300,6 @@ export default function AdminImprimirFichas() {
           ['Tamanho da camiseta', temCamiseta ? camisetaLabelDe(a) : ''],
         ]);
 
-        // Itens do kit - navy/stripe, em duas colunas pra economizar altura.
-        const itens = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens do kit a confirmar.'];
-        docPdf.setFillColor(...NAVY);
-        docPdf.rect(marginX, y, usableW, 6, 'F');
-        docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(7.5);
-        docPdf.setTextColor(255, 255, 255);
-        docPdf.text(`ITENS DO SEU KIT (${kitNomeDe(a).toUpperCase()})`, marginX + 3, y + 4.2);
-        y += 6;
-
-        docPdf.setFont('helvetica', 'normal');
-        docPdf.setFontSize(8);
-        for (let idx = 0; idx < itens.length; idx += 2) {
-          const itemL = itens[idx] || '';
-          const itemR = itens[idx + 1] || '';
-          const linesL = itemL ? docPdf.splitTextToSize(`•  ${itemL}`, colW - 4) : [];
-          const linesR = itemR ? docPdf.splitTextToSize(`•  ${itemR}`, colW - 4) : [];
-          const lineCount = Math.max(linesL.length, linesR.length, 1);
-          const rowH = lineCount * 3.6 + 1.6;
-          if ((idx / 2) % 2 === 1) {
-            docPdf.setFillColor(...STRIPE);
-            docPdf.rect(marginX, y, usableW, rowH, 'F');
-          }
-          docPdf.setTextColor(...NAVY);
-          if (linesL.length) docPdf.text(linesL, marginX + 3, y + 3);
-          if (linesR.length) docPdf.text(linesR, col2X + 3, y + 3);
-          y += rowH;
-        }
-        y += 4;
-
         // Mensagem motivacional
         docPdf.setFont('helvetica', 'italic');
         docPdf.setFontSize(8.3);
@@ -450,7 +420,7 @@ export default function AdminImprimirFichas() {
           <p style={{ color: '#64748b', fontWeight: 500 }}>
             {atletaId
               ? 'Gerando a ficha em PDF deste atleta automaticamente...'
-              : `Uma ficha por atleta confirmado (${athletes.length}), com dados completos, prova/kit, itens do kit, mensagem motivacional e a programação do dia 12/09.`}
+              : `Uma ficha por atleta confirmado (${athletes.length}), com dados completos, prova/kit, mensagem motivacional e a programação do dia 12/09.`}
           </p>
         </div>
         <button
@@ -475,7 +445,6 @@ export default function AdminImprimirFichas() {
         {athletes.map(a => {
           const kitDoc = kitDe(a);
           const temCamiseta = Boolean(kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA')));
-          const itens = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens a confirmar'];
           const primeiroNome = (a.nome || 'ATLETA').trim().split(/\s+/)[0];
           return (
           <div key={a.id} style={{
@@ -504,13 +473,6 @@ export default function AdminImprimirFichas() {
                 <span>Equipe: {a.integranteEquipe === 'sim' ? (a.equipeNome || 'Sim') : 'Não'}</span>
                 <span>Kit: {kitNomeDe(a)}</span>
                 {temCamiseta && <span>Camiseta: {camisetaLabelDe(a)}</span>}
-              </div>
-
-              <div style={{ background: '#071A45', color: '#fff', fontWeight: 800, fontSize: '2em', padding: '1.5% 3%', marginTop: '2%' }}>
-                ITENS DO KIT ({kitNomeDe(a).toUpperCase()})
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', fontSize: '1.9em', color: '#334155', gap: '1%' }}>
-                {itens.slice(0, 6).map((item, idx) => <span key={idx}>• {item}</span>)}
               </div>
 
               <div style={{ background: '#f0fdf4', border: '1px solid #6BFF2A', borderRadius: '4%', padding: '2% 3%', marginTop: '2%', fontSize: '1.8em', fontStyle: 'italic', color: '#071A45' }}>
@@ -566,7 +528,6 @@ function FichaPrintPage({ atleta, kitDe, kitNomeDe, camisetaLabelDe, modalidadeN
 
   const kitDoc = kitDe(atleta);
   const temCamiseta = Boolean(kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA')));
-  const itens = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens do kit a confirmar.'];
   const primeiroNome = (atleta.nome || 'ATLETA').trim().split(/\s+/)[0];
   const NAVY = '#071A45';
   const STRIPE = '#f1f5f9';
@@ -664,15 +625,6 @@ function FichaPrintPage({ atleta, kitDe, kitNomeDe, camisetaLabelDe, modalidadeN
               </div>
             );
           })}
-        </div>
-
-        <div style={{ background: NAVY, color: '#fff', fontWeight: 800, fontSize: '0.85rem', padding: '8px 12px', marginTop: 14 }}>
-          ITENS DO SEU KIT ({kitNomeDe(atleta).toUpperCase()})
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: '8px 12px' }}>
-          {itens.map((item, idx) => (
-            <div key={idx} style={{ fontSize: '0.85rem', padding: '2px 0' }}>• {item}</div>
-          ))}
         </div>
 
         <div style={{

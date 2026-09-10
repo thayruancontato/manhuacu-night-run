@@ -8,6 +8,7 @@ import Home from './pages/Home';
 import AtletasConfirmados from './pages/AtletasConfirmados';
 import EnderecoAtleta from './pages/EnderecoAtleta';
 import AdminBateu1000Preview from './pages/AdminBateu1000Preview';
+import AdminRetiradaKits from './pages/AdminRetiradaKits';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminInscritos from './pages/AdminInscritos';
 import AdminFinanceiro from './pages/AdminFinanceiro';
@@ -86,6 +87,7 @@ function App() {
               <Route path="/sorteio/:sorteioId" element={<SorteioPublico />} />
               <Route path="/sorteio/:sorteioId/operar" element={<SorteioOperador />} />
               <Route path="/admin/bateu1000" element={<AdminBateu1000Preview />} />
+              <Route path="/admin/retirada-kits" element={<AdminRetiradaKits />} />
               <Route path="/admin/perfil-exemplo" element={<AdminPerfilExemploPreview />} />
 
               {/* Shared Login */}

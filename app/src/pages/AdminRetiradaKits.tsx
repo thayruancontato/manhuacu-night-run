@@ -5,7 +5,8 @@ import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import { getCamisetaShortLabel } from '../utils/camisetaUtils';
-import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink } from 'lucide-react';
+import { formatDateBR } from '../utils/dateUtils';
+import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink, Mail, Phone, MapPin, Flag, Package, HeartPulse } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 
@@ -47,6 +48,7 @@ export default function AdminRetiradaKits() {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [processingMultipla, setProcessingMultipla] = useState(false);
   const [confirmarDuplicado, setConfirmarDuplicado] = useState<{ reg: Reg; nome: string; terceiro: boolean } | null>(null);
+  const [detalhesReg, setDetalhesReg] = useState<Reg | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -143,19 +145,18 @@ export default function AdminRetiradaKits() {
   };
 
   const VerDetalhesLink = ({ r }: { r: Reg }) => (
-    <a
-      href={`/admin/inscritos/${r.id}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Ver detalhes do atleta em nova aba"
+    <button
+      type="button"
+      onClick={() => setDetalhesReg(r)}
+      title="Ver detalhes do atleta"
       style={{
         background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 10,
         padding: '10px 12px', display: 'inline-flex', alignItems: 'center', gap: 6,
-        fontWeight: 800, fontSize: '0.72rem', textDecoration: 'none', whiteSpace: 'nowrap',
+        fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap',
       }}
     >
       <ExternalLink size={14} /> DETALHES
-    </a>
+    </button>
   );
 
   const registrarRetirada = async (r: Reg, nomeRetirante: string, terceiro: boolean) => {
@@ -488,6 +489,98 @@ export default function AdminRetiradaKits() {
           </div>
         </div>
       )}
+
+      {detalhesReg && (() => {
+        // `regs` vem do onSnapshot com o documento completo (Firestore não filtra campos na
+        // leitura) - o tipo Reg só declara o subconjunto usado nos cards, mas os outros campos
+        // (email, sexo, endereço completo, saúde, etc.) já estão em memória, sem custo extra.
+        const d = detalhesReg as any;
+        const InfoRow = ({ icon: Icon, label, value }: { icon: any; label: string; value: any }) => {
+          if (!value) return null;
+          return (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 0', borderBottom: '1px solid #f1f5f9' }}>
+              <Icon size={15} color="#94a3b8" style={{ marginTop: 2, flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: '0.68rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>{label}</div>
+                <div style={{ fontSize: '0.88rem', color: '#071A45', fontWeight: 600 }}>{value}</div>
+              </div>
+            </div>
+          );
+        };
+        const camisetaInfo = camisetaInfoDe(detalhesReg);
+        const endereco = d.endereco?.rua
+          ? `${d.endereco.rua}${d.endereco.numero ? `, ${d.endereco.numero}` : ''} - ${d.endereco.bairro || ''}, ${d.endereco.cidade || ''}/${d.endereco.uf || ''}`
+          : (d.endereco?.cidade ? `${d.endereco.cidade}/${d.endereco.uf || ''}` : '');
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: 20 }}>
+            <div style={{ background: '#fff', borderRadius: 20, maxWidth: 480, width: '100%', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)' }}>
+              <div style={{
+                padding: '20px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 14,
+                position: 'sticky', top: 0, background: '#fff', zIndex: 1,
+              }}>
+                <div style={{ width: 56, height: 56, borderRadius: 14, flexShrink: 0, overflow: 'hidden', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {d.fotoUrl ? <img src={d.fotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <UserIcon size={26} color="#2563eb" />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 900, color: '#071A45', margin: 0 }}>{d.nome?.toUpperCase()}</h3>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                    {d.paymentStatus === 'pago' ? 'Pagamento confirmado' : 'Aguardando pagamento'}
+                    {d.numeroInscricao ? ` · Nº ${d.numeroInscricao}` : ''}
+                  </div>
+                </div>
+                <button onClick={() => setDetalhesReg(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', flexShrink: 0 }}>
+                  <X size={22} />
+                </button>
+              </div>
+
+              <div style={{ padding: '4px 24px 24px' }}>
+                <InfoRow icon={UserIcon} label="CPF" value={d.cpf} />
+                <InfoRow icon={Phone} label="WhatsApp" value={d.telefone} />
+                <InfoRow icon={Mail} label="E-mail" value={d.email} />
+                <InfoRow icon={UserIcon} label="Data de nascimento" value={d.dataNascimento ? formatDateBR(d.dataNascimento) : ''} />
+                <InfoRow icon={Flag} label="Modalidade" value={d.modalidadeNome || (d.categoria === 'infantil' ? 'Infantil' : '')} />
+                <InfoRow icon={Package} label="Kit" value={`${kitNomeDe(detalhesReg)}${camisetaInfo ? ` · ${camisetaInfo.tamanho} (${camisetaInfo.tipo})` : ''}`} />
+                <InfoRow icon={MapPin} label="Endereço" value={endereco} />
+                {d.responsavelNome && <InfoRow icon={UserIcon} label="Responsável" value={`${d.responsavelNome}${d.responsavelCpf ? ` · CPF ${d.responsavelCpf}` : ''}`} />}
+                {(d.saude?.tipoSanguineo || d.saude?.condicaoSaude || d.saude?.alergiaDesc) && (
+                  <InfoRow
+                    icon={HeartPulse}
+                    label="Saúde"
+                    value={[
+                      d.saude?.tipoSanguineo ? `Tipo sanguíneo: ${d.saude.tipoSanguineo}` : '',
+                      d.saude?.condicaoSaude ? `Condição: ${d.saude.condicaoSaude}` : '',
+                      d.saude?.alergiaDesc ? `Alergias: ${d.saude.alergiaDesc}` : '',
+                    ].filter(Boolean).join(' · ')}
+                  />
+                )}
+                {d.contatoEmergencia?.nome && (
+                  <InfoRow icon={Phone} label="Contato de emergência" value={`${d.contatoEmergencia.nome}${d.contatoEmergencia.telefone ? ` · ${d.contatoEmergencia.telefone}` : ''}`} />
+                )}
+                {d.kitRetiradoEm && (
+                  <div style={{ marginTop: 14, padding: '10px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, fontSize: '0.8rem', color: '#166534', fontWeight: 700 }}>
+                    Kit retirado por {(d.kitRetiradoPor || d.nome).toUpperCase()}{d.kitRetiradoTerceiro ? ' (terceiro)' : ''}
+                  </div>
+                )}
+                {role === 'admin' && (
+                  <a
+                    href={`/admin/inscritos/${detalhesReg.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 18,
+                      background: '#071A45', color: '#fff', borderRadius: 10, padding: '12px', fontWeight: 800,
+                      fontSize: '0.8rem', textDecoration: 'none',
+                    }}
+                  >
+                    <ExternalLink size={15} /> ABRIR FICHA COMPLETA (EDITAR)
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

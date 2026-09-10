@@ -52,6 +52,8 @@ export default function AdminRetiradaKits() {
   const [detalhesReg, setDetalhesReg] = useState<Reg | null>(null);
   const [desfazerAlvo, setDesfazerAlvo] = useState<Reg | null>(null);
   const [desfazendo, setDesfazendo] = useState(false);
+  const [filtroTipo, setFiltroTipo] = useState<'todos' | 'propria' | 'terceiro'>('todos');
+  const [filtroKitId, setFiltroKitId] = useState('');
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -101,6 +103,12 @@ export default function AdminRetiradaKits() {
     return regs
       .filter(r => Boolean(r.kitRetiradoEm))
       .filter(r => {
+        if (filtroTipo === 'propria' && r.kitRetiradoTerceiro) return false;
+        if (filtroTipo === 'terceiro' && !r.kitRetiradoTerceiro) return false;
+        if (filtroKitId && (r.kit || 'unico') !== filtroKitId) return false;
+        return true;
+      })
+      .filter(r => {
         if (!term && !termDigits) return true;
         if (term.length >= 2 && (normalize(r.nome).includes(term) || normalize(r.kitRetiradoPor || '').includes(term))) return true;
         if (termDigits.length >= 2 && onlyDigits(r.cpf).includes(termDigits)) return true;
@@ -109,7 +117,7 @@ export default function AdminRetiradaKits() {
         return false;
       })
       .sort((a, b) => toMillis(b.kitRetiradoEm) - toMillis(a.kitRetiradoEm));
-  }, [search, regs]);
+  }, [search, regs, filtroTipo, filtroKitId]);
 
   const kitNomeDe = (r: Reg) => resolveKitNome(kits, r.kit, 'Kit Único');
 
@@ -575,6 +583,32 @@ export default function AdminRetiradaKits() {
 
         {modo === 'historico' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+              {([
+                { key: 'todos', label: 'Todos' },
+                { key: 'propria', label: 'Retirada própria' },
+                { key: 'terceiro', label: 'Por terceiro' },
+              ] as const).map(opt => (
+                <button
+                  key={opt.key}
+                  onClick={() => setFiltroTipo(opt.key)}
+                  style={{
+                    background: filtroTipo === opt.key ? '#071A45' : '#fff', color: filtroTipo === opt.key ? '#fff' : '#334155',
+                    border: '1px solid #cbd5e1', borderRadius: 20, padding: '8px 14px', fontWeight: 800, fontSize: '0.75rem', cursor: 'pointer',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+              <select
+                value={filtroKitId}
+                onChange={e => setFiltroKitId(e.target.value)}
+                style={{ border: '1px solid #cbd5e1', borderRadius: 20, padding: '8px 14px', fontWeight: 800, fontSize: '0.75rem', color: '#334155', background: '#fff', cursor: 'pointer' }}
+              >
+                <option value="">Todos os kits</option>
+                {kits.map(k => <option key={k.id} value={k.id}>{k.nome}</option>)}
+              </select>
+            </div>
             <button
               onClick={generateHistoricoPdf}
               disabled={gerandoPdfHistorico || historico.length === 0}

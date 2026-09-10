@@ -208,11 +208,9 @@ export default function AdminImprimirFichas() {
         docPdf.addImage(titleImg.data, 'PNG', marginX, y, titleImgH * titleImg.aspect, titleImgH, undefined, 'FAST');
         y += titleImgH + 4;
 
-        // Foto à esquerda do nome, dentro do quadro azul, com um respiro entre as duas -
-        // um único bloco compacto que já cobre número de inscrição, modalidade, kit e
-        // camiseta (quando o kit inclui uma).
-        const photoSize = 20;
-        const boxH = photoSize;
+        // Foto à esquerda do nome, sem fundo colorido - só a foto e o nome bem grande ao
+        // lado, com um respiro entre as duas.
+        const photoSize = 22;
         if (fotoBase64) {
           try {
             const photoFormat = fotoBase64.includes('image/png') ? 'PNG' : 'JPEG';
@@ -222,27 +220,16 @@ export default function AdminImprimirFichas() {
             docPdf.rect(marginX, y, photoSize, photoSize, 'D');
           } catch { /* segue sem foto */ }
         }
-        const boxX = fotoBase64 ? marginX + photoSize + 5 : marginX;
-        const boxW = usableW - (boxX - marginX);
-        docPdf.setFillColor(...NAVY);
-        docPdf.roundedRect(boxX, y, boxW, boxH, 3, 3, 'F');
+        const nomeX = fotoBase64 ? marginX + photoSize + 6 : marginX;
+        const nomeW = usableW - (nomeX - marginX);
         docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(11.5);
-        docPdf.setTextColor(255, 255, 255);
-        const nomeLines = docPdf.splitTextToSize(a.nome.toUpperCase(), boxW - 10);
-        docPdf.text(nomeLines[0], boxX + 5, y + 8);
-        docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(8);
-        docPdf.setTextColor(...GREEN);
-        const linhaInfo = [
-          a.numeroInscricao ? `Nº ${a.numeroInscricao}` : '',
-          modalidadeNomeDe(a),
-          kitNomeDe(a),
-          temCamiseta && camisetaLabelDe(a) ? `Camiseta ${camisetaLabelDe(a)}` : '',
-        ].filter(Boolean).join('  ·  ');
-        const linhaInfoLines = docPdf.splitTextToSize(linhaInfo, boxW - 10);
-        docPdf.text(linhaInfoLines.slice(0, 2), boxX + 5, y + 15);
-        y += boxH + 5;
+        docPdf.setFontSize(17);
+        docPdf.setTextColor(...NAVY);
+        const nomeLines = docPdf.splitTextToSize(a.nome.toUpperCase(), nomeW).slice(0, 2);
+        const nomeBlockH = nomeLines.length * 7;
+        const nomeStartY = y + Math.max(photoSize, nomeBlockH) / 2 - (nomeBlockH - 7) / 2;
+        docPdf.text(nomeLines, nomeX, nomeStartY);
+        y += photoSize + 6;
 
         // Duas colunas por linha (label em cima, valor embaixo) - mesmo padrão do
         // comprovante de inscrição. Uma seção só, combinando dados pessoais e da prova,
@@ -293,14 +280,18 @@ export default function AdminImprimirFichas() {
         };
 
         drawInfoSection('SEUS DADOS E DA PROVA', [
+          ['Número da inscrição', a.numeroInscricao],
           ['CPF', a.cpf],
           ['Data de nascimento', a.dataNascimento ? formatDateBRSimple(a.dataNascimento) : ''],
           ['Sexo', a.sexo === 'M' ? 'Masculino' : a.sexo === 'F' ? 'Feminino' : ''],
           ['WhatsApp', a.telefone],
           ['E-mail', a.email],
+          ['Modalidade', modalidadeNomeDe(a)],
           ['Distância', modalidadeDistanciaDe(a)],
           ['Categoria', a.categoria === 'infantil' ? 'Infantil' : 'Adulto / adolescente'],
           ['Equipe', a.integranteEquipe === 'sim' ? (a.equipeNome || 'Sim') : 'Não'],
+          ['Kit', kitNomeDe(a)],
+          ['Tamanho da camiseta', temCamiseta ? camisetaLabelDe(a) : ''],
         ]);
 
         // Itens do kit - navy/stripe, em duas colunas pra economizar altura.
@@ -339,62 +330,61 @@ export default function AdminImprimirFichas() {
         const motivLines = docPdf.splitTextToSize(MENSAGEM_MOTIVACIONAL, usableW - 10);
         const motivH = motivLines.length * 3.8 + 6;
         docPdf.setFillColor(240, 253, 244);
-        docPdf.setDrawColor(...GREEN);
+        docPdf.setDrawColor(187, 247, 208);
         docPdf.roundedRect(marginX, y, usableW, motivH, 3, 3, 'FD');
         docPdf.setTextColor(...NAVY);
         docPdf.text(motivLines, marginX + 5, y + 5.2);
         y += motivH + 4;
 
-        // Programação do dia - blocos coloridos (verde/branco alternados), no mesmo
-        // espírito visual do material de divulgação do evento.
+        // Programação do dia - mesmo padrão navy/stripe usado no resto da ficha (sem
+        // blocos coloridos), pra manter tudo visualmente calmo e consistente.
         docPdf.setFillColor(...NAVY);
         docPdf.rect(marginX, y, usableW, 6, 'F');
         docPdf.setFont('helvetica', 'bold');
         docPdf.setFontSize(7.5);
         docPdf.setTextColor(255, 255, 255);
         docPdf.text('PROGRAMAÇÃO DO DIA 12/09 (SÁBADO)', marginX + 3, y + 4.2);
-        y += 6 + 2.5;
+        y += 6;
 
         const horaColW = 24;
         PROGRAMACAO.forEach((item, idx) => {
-          const isGreen = idx % 2 === 0;
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(7.8);
+          docPdf.setFontSize(7.6);
           const tituloLines = docPdf.splitTextToSize(item.titulo, usableW - horaColW - 8);
           docPdf.setFont('helvetica', 'normal');
           docPdf.setFontSize(6.6);
           const subLines = item.sub ? docPdf.splitTextToSize(item.sub, usableW - horaColW - 8) : [];
           const lineCount = tituloLines.length + subLines.length;
-          const rowH = Math.max(7.5, lineCount * 3.3 + 2.6);
+          const rowH = Math.max(6.5, lineCount * 3.3 + 1.8);
 
-          docPdf.setFillColor(...(isGreen ? GREEN : [255, 255, 255] as [number, number, number]));
-          docPdf.roundedRect(marginX, y, usableW, rowH, 1.5, 1.5, 'F');
-          if (!isGreen) {
-            docPdf.setDrawColor(226, 232, 240);
-            docPdf.setLineWidth(0.2);
-            docPdf.roundedRect(marginX, y, usableW, rowH, 1.5, 1.5, 'D');
+          if (idx % 2 === 1) {
+            docPdf.setFillColor(...STRIPE);
+            docPdf.rect(marginX, y, usableW, rowH, 'F');
           }
+          docPdf.setDrawColor(226, 232, 240);
+          docPdf.setLineWidth(0.2);
+          docPdf.line(marginX + horaColW, y, marginX + horaColW, y + rowH);
 
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(7.5);
+          docPdf.setFontSize(7.3);
           docPdf.setTextColor(...NAVY);
           const horaLines = docPdf.splitTextToSize(item.hora, horaColW - 4);
           docPdf.text(horaLines, marginX + 2.5, y + rowH / 2 - (horaLines.length - 1) * 1.6 + 1.1);
 
-          let subY = y + 3.6;
+          let subY = y + 3.4;
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(7.8);
+          docPdf.setFontSize(7.6);
           docPdf.setTextColor(...NAVY);
           docPdf.text(tituloLines, marginX + horaColW + 3, subY);
           subY += tituloLines.length * 3.3;
           if (subLines.length) {
             docPdf.setFont('helvetica', 'normal');
             docPdf.setFontSize(6.6);
-            docPdf.setTextColor(isGreen ? 21 : 100, isGreen ? 78 : 116, isGreen ? 46 : 139);
+            docPdf.setTextColor(100, 116, 139);
             docPdf.text(subLines, marginX + horaColW + 3, subY + 1);
           }
 
-          y += rowH + 1.2;
+          y += rowH;
         });
         y += 3;
 
@@ -459,25 +449,23 @@ export default function AdminImprimirFichas() {
               <div style={{ color: '#071A45', fontWeight: 900, fontSize: '2.6em', textTransform: 'uppercase' }}>
                 {primeiroNome}, seu kit chegou!
               </div>
-              <div style={{ display: 'flex', gap: '2%', alignItems: 'stretch' }}>
-                <div style={{ width: '22%', aspectRatio: '1', flexShrink: 0, overflow: 'hidden', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #071A45' }}>
+              <div style={{ display: 'flex', gap: '3%', alignItems: 'center' }}>
+                <div style={{ width: '24%', aspectRatio: '1', flexShrink: 0, overflow: 'hidden', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #071A45' }}>
                   {a.fotoUrl ? <img src={a.fotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <User size={5} color="#2563eb" />}
                 </div>
-                <div style={{ flex: 1, background: '#071A45', borderRadius: '6%', padding: '3%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '4%' }}>
-                  <strong style={{ color: '#fff', fontSize: '2.4em', lineHeight: 1.1 }}>{a.nome.toUpperCase()}</strong>
-                  <span style={{ color: '#6BFF2A', fontSize: '1.9em', fontWeight: 700 }}>
-                    {[a.numeroInscricao ? `Nº ${a.numeroInscricao}` : '', modalidadeNomeDe(a), kitNomeDe(a)].filter(Boolean).join(' · ')}
-                    {temCamiseta && camisetaLabelDe(a) ? ` · Camiseta ${camisetaLabelDe(a)}` : ''}
-                  </span>
-                </div>
+                <strong style={{ color: '#071A45', fontSize: '4em', lineHeight: 1.1 }}>{a.nome.toUpperCase()}</strong>
               </div>
 
               <div style={{ background: '#071A45', color: '#fff', fontWeight: 800, fontSize: '2em', padding: '1.5% 3%', marginTop: '2%' }}>SEUS DADOS E DA PROVA</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', fontSize: '1.9em', color: '#334155', gap: '1%' }}>
+                <span>Nº: {a.numeroInscricao || '-'}</span>
                 <span>CPF: {a.cpf || '-'}</span>
                 <span>WhatsApp: {a.telefone || '-'}</span>
+                <span>Modalidade: {modalidadeNomeDe(a)}</span>
                 <span>Categoria: {a.categoria === 'infantil' ? 'Infantil' : 'Adulto'}</span>
                 <span>Equipe: {a.integranteEquipe === 'sim' ? (a.equipeNome || 'Sim') : 'Não'}</span>
+                <span>Kit: {kitNomeDe(a)}</span>
+                {temCamiseta && <span>Camiseta: {camisetaLabelDe(a)}</span>}
               </div>
 
               <div style={{ background: '#071A45', color: '#fff', fontWeight: 800, fontSize: '2em', padding: '1.5% 3%', marginTop: '2%' }}>

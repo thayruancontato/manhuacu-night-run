@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
+import { getCamisetaShortLabel } from '../utils/camisetaUtils';
 import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
@@ -15,6 +16,7 @@ type Reg = {
   telefone: string;
   numeroInscricao?: string;
   kit?: string;
+  tamanhoCamiseta?: string;
   modalidadeNome?: string;
   categoria?: string;
   fotoUrl?: string;
@@ -37,6 +39,7 @@ export default function AdminRetiradaKits() {
   const navigate = useNavigate();
   const [regs, setRegs] = useState<Reg[]>([]);
   const [kits, setKits] = useState<KitRecord[]>([]);
+  const [camisetas, setCamisetas] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [modo, setModo] = useState<'unica' | 'multipla' | 'historico'>('unica');
   const [terceiroNome, setTerceiroNome] = useState('');
@@ -52,6 +55,7 @@ export default function AdminRetiradaKits() {
 
   useEffect(() => {
     fetchKits().then(setKits).catch(() => {});
+    getDocs(collection(db, 'nightrun_camisetas')).then(snap => setCamisetas(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(() => {});
     const unsub = onSnapshot(
       query(collection(db, 'nightrun_registrations'), where('paymentStatus', '==', 'pago')),
       snap => setRegs(snap.docs.map(d => ({ id: d.id, ...d.data() } as Reg))),
@@ -103,6 +107,16 @@ export default function AdminRetiradaKits() {
   }, [search, regs]);
 
   const kitNomeDe = (r: Reg) => resolveKitNome(kits, r.kit, 'Kit Único');
+
+  // Nem todo kit inclui camiseta (ex: Kit Extra é só número/chip/medalha) - só mostra o
+  // tamanho no card quando o kit da pessoa realmente tem "CAMISETA" entre os itens.
+  const tamanhoCamisetaDe = (r: Reg) => {
+    const kitDoc = kits.find(k => k.id === r.kit);
+    const temCamiseta = kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA'));
+    if (!temCamiseta || !r.tamanhoCamiseta) return '';
+    const item = camisetas.find(c => c.id === r.tamanhoCamiseta);
+    return getCamisetaShortLabel(r.tamanhoCamiseta, item);
+  };
 
   const registrarRetirada = async (r: Reg, nomeRetirante: string, terceiro: boolean) => {
     setProcessingId(r.id);
@@ -246,7 +260,7 @@ export default function AdminRetiradaKits() {
                   <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '10px 14px' }}>
                     <div>
                       <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
-                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{kitNomeDe(r)}{tamanhoCamisetaDe(r) ? ` (${tamanhoCamisetaDe(r)})` : ''}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}</div>
                     </div>
                     <button onClick={() => toggleMultipla(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
                       <X size={18} />
@@ -307,7 +321,7 @@ export default function AdminRetiradaKits() {
                   <div style={{ flex: 1, minWidth: 160 }}>
                     <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                     <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
-                      {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                      {kitNomeDe(r)}{tamanhoCamisetaDe(r) ? ` (${tamanhoCamisetaDe(r)})` : ''}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
                       {r.endereco?.cidade ? ` · ${r.endereco.cidade}${r.endereco.uf ? `/${r.endereco.uf}` : ''}` : ''}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#16a34a', fontWeight: 700, marginTop: 4 }}>
@@ -346,7 +360,7 @@ export default function AdminRetiradaKits() {
                 <div style={{ flex: 1, minWidth: 160 }}>
                   <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                   <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
-                    {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                    {kitNomeDe(r)}{tamanhoCamisetaDe(r) ? ` (${tamanhoCamisetaDe(r)})` : ''}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
                     {r.endereco?.cidade ? ` · ${r.endereco.cidade}${r.endereco.uf ? `/${r.endereco.uf}` : ''}` : ''}
                   </div>
                   {jaRetirado && (

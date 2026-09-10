@@ -26,10 +26,23 @@ const MENSAGEM_MOTIVACIONAL =
   'passo no meio do caminho. Guarde seu kit com carinho, vista a camisa com orgulho e venha viver ' +
   'uma noite histórica. Nos vemos na arena!';
 
+const formatDateBRSimple = (value: any): string => {
+  const date = value?.toDate?.() || new Date(value);
+  if (Number.isNaN(date?.getTime?.())) return '';
+  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+};
+
 type AthleteRow = {
   id: string;
   nome: string;
   cpf: string;
+  telefone?: string;
+  email?: string;
+  dataNascimento?: any;
+  sexo?: string;
+  categoria?: string;
+  integranteEquipe?: string;
+  equipeNome?: string;
   fotoUrl?: string;
   numeroInscricao?: string;
   kit?: string;
@@ -79,6 +92,7 @@ export default function AdminImprimirFichas() {
     return getCamisetaShortLabel(a.tamanhoCamiseta, item);
   };
   const modalidadeNomeDe = (a: AthleteRow) => modalidades.find(m => m.id === a.modalidadeId)?.nome || a.modalidadeNome || '';
+  const modalidadeDistanciaDe = (a: AthleteRow) => modalidades.find(m => m.id === a.modalidadeId)?.distancia || '';
 
   const generatePdf = async () => {
     if (athletes.length === 0) return;
@@ -151,6 +165,7 @@ export default function AdminImprimirFichas() {
       const usableW = pageW - marginX * 2;
       const NAVY: [number, number, number] = [7, 26, 69];
       const GREEN: [number, number, number] = [107, 255, 42];
+      const STRIPE: [number, number, number] = [241, 245, 249];
 
       const drawHeader = () => {
         try {
@@ -202,56 +217,117 @@ export default function AdminImprimirFichas() {
         docPdf.text('MCU Night Run 2026 · 12/09/2026 (sábado) · Manhuaçu/MG', marginX, y);
         y += 9;
 
-        // Bloco com nome + dados básicos
+        // Número de inscrição em destaque, mesmo padrão do comprovante de inscrição
+        if (a.numeroInscricao) {
+          docPdf.setFillColor(...NAVY);
+          docPdf.roundedRect(marginX, y, usableW, 16, 3, 3, 'F');
+          docPdf.setFont('helvetica', 'bold');
+          docPdf.setFontSize(7.5);
+          docPdf.setTextColor(255, 255, 255);
+          docPdf.text('NÚMERO DA INSCRIÇÃO', marginX + 6, y + 6.5);
+          docPdf.setFont('courier', 'bold');
+          docPdf.setFontSize(14);
+          docPdf.setTextColor(...GREEN);
+          docPdf.text(String(a.numeroInscricao), marginX + 6, y + 13);
+          y += 16 + 6;
+        }
+
+        // Duas colunas por linha (label em cima, valor embaixo, quebrando linha se
+        // precisar) - mesmo padrão do comprovante de inscrição - com quebra de página
+        // automática se uma seção não couber, garantindo que nada seja cortado.
+        const colGap = 6;
+        const colW = (usableW - colGap) / 2;
+        const col2X = marginX + colW + colGap;
+        const valueLineH = 4.1;
+
+        const drawInfoSection = (title: string, rows: [string, any][]) => {
+          const visibleRows = rows.filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
+          if (visibleRows.length === 0) return;
+          if (y + 7 > pageH - marginBottom) newPage();
+          docPdf.setFillColor(...NAVY);
+          docPdf.rect(marginX, y, usableW, 7, 'F');
+          docPdf.setFont('helvetica', 'bold');
+          docPdf.setFontSize(8.5);
+          docPdf.setTextColor(255, 255, 255);
+          docPdf.text(title, marginX + 3, y + 4.9);
+          y += 7;
+
+          for (let idx = 0; idx < visibleRows.length; idx += 2) {
+            const left = visibleRows[idx];
+            const right = visibleRows[idx + 1];
+            const leftLines = docPdf.splitTextToSize(String(left[1]), colW - 4);
+            const rightLines = right ? docPdf.splitTextToSize(String(right[1]), colW - 4) : [];
+            const lineCount = Math.max(leftLines.length, rightLines.length, 1);
+            const rowH = 3.6 + lineCount * valueLineH + 1.5;
+
+            if (y + rowH > pageH - marginBottom) newPage();
+
+            if ((idx / 2) % 2 === 1) {
+              docPdf.setFillColor(...STRIPE);
+              docPdf.rect(marginX, y, usableW, rowH, 'F');
+            }
+            const drawCell = (x: number, label: string, lines: string[]) => {
+              docPdf.setFont('helvetica', 'bold');
+              docPdf.setFontSize(7);
+              docPdf.setTextColor(100, 116, 139);
+              docPdf.text(label.toUpperCase(), x + 3, y + 3.6);
+              docPdf.setFont('helvetica', 'normal');
+              docPdf.setFontSize(9);
+              docPdf.setTextColor(...NAVY);
+              docPdf.text(lines, x + 3, y + 3.6 + valueLineH);
+            };
+            drawCell(marginX, left[0], leftLines);
+            if (right) drawCell(col2X, right[0], rightLines);
+            y += rowH;
+          }
+          y += 5;
+        };
+
+        drawInfoSection('DADOS DO ATLETA', [
+          ['Nome completo', a.nome],
+          ['CPF', a.cpf],
+          ['Data de nascimento', a.dataNascimento ? formatDateBRSimple(a.dataNascimento) : ''],
+          ['Sexo', a.sexo === 'M' ? 'Masculino' : a.sexo === 'F' ? 'Feminino' : ''],
+          ['WhatsApp', a.telefone],
+          ['E-mail', a.email],
+        ]);
+
+        drawInfoSection('PROVA & KIT', [
+          ['Modalidade', modalidadeNomeDe(a)],
+          ['Distância', modalidadeDistanciaDe(a)],
+          ['Categoria', a.categoria === 'infantil' ? 'Infantil' : 'Adulto / adolescente'],
+          ['Kit', kitNomeDe(a)],
+          ['Tamanho da camiseta', camisetaLabelDe(a)],
+          ['Equipe', a.integranteEquipe === 'sim' ? (a.equipeNome || 'Sim') : 'Não'],
+        ]);
+
+        // Itens do kit - mesmo padrão navy/stripe, uma coluna por item.
+        const kitDoc = kitDe(a);
+        const itens = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens do kit a confirmar.'];
+        if (y + 7 > pageH - marginBottom) newPage();
         docPdf.setFillColor(...NAVY);
-        docPdf.roundedRect(marginX, y, usableW, 24, 3, 3, 'F');
-        docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(13);
-        docPdf.setTextColor(255, 255, 255);
-        const nomeLines = docPdf.splitTextToSize(a.nome.toUpperCase(), usableW - 12);
-        docPdf.text(nomeLines[0], marginX + 6, y + 9);
+        docPdf.rect(marginX, y, usableW, 7, 'F');
         docPdf.setFont('helvetica', 'bold');
         docPdf.setFontSize(8.5);
-        docPdf.setTextColor(...GREEN);
-        const linha2 = [
-          a.numeroInscricao ? `Nº ${a.numeroInscricao}` : '',
-          modalidadeNomeDe(a),
-          kitNomeDe(a),
-          camisetaLabelDe(a) ? `Camiseta ${camisetaLabelDe(a)}` : '',
-        ].filter(Boolean).join('   ·   ');
-        docPdf.text(linha2, marginX + 6, y + 17.5);
-        y += 24 + 8;
-
-        // Itens do kit
-        const kitDoc = kitDe(a);
-        const itens = kitDoc?.itens || [];
-        docPdf.setFillColor(...NAVY);
-        docPdf.rect(marginX, y, usableW, 8, 'F');
-        docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(9);
         docPdf.setTextColor(255, 255, 255);
-        docPdf.text(`ITENS DO SEU KIT (${kitNomeDe(a).toUpperCase()})`, marginX + 3, y + 5.6);
-        y += 8 + 5;
+        docPdf.text(`ITENS DO SEU KIT (${kitNomeDe(a).toUpperCase()})`, marginX + 3, y + 4.9);
+        y += 7;
 
-        if (y + 10 > pageH - marginBottom) newPage();
         docPdf.setFont('helvetica', 'normal');
         docPdf.setFontSize(9.5);
-        docPdf.setTextColor(...NAVY);
-        const colW = (usableW - 6) / 2;
-        for (let idx = 0; idx < Math.max(itens.length, 1); idx += 2) {
-          const itemL = itens[idx] || '';
-          const itemR = itens[idx + 1] || '';
-          const linesL = itemL ? docPdf.splitTextToSize(`• ${itemL}`, colW - 2) : [];
-          const linesR = itemR ? docPdf.splitTextToSize(`• ${itemR}`, colW - 2) : [];
-          const lineCount = Math.max(linesL.length, linesR.length, 1);
-          const rowH = lineCount * 4.6 + 1.5;
+        itens.forEach((item, idx) => {
+          const lines = docPdf.splitTextToSize(`•  ${item}`, usableW - 8);
+          const rowH = lines.length * 4.6 + 2.6;
           if (y + rowH > pageH - marginBottom) newPage();
-          if (linesL.length) docPdf.text(linesL, marginX, y + 3.6);
-          if (linesR.length) docPdf.text(linesR, marginX + colW + 6, y + 3.6);
-          if (itens.length === 0 && idx === 0) docPdf.text('Itens do kit a confirmar.', marginX, y + 3.6);
+          if (idx % 2 === 1) {
+            docPdf.setFillColor(...STRIPE);
+            docPdf.rect(marginX, y, usableW, rowH, 'F');
+          }
+          docPdf.setTextColor(...NAVY);
+          docPdf.text(lines, marginX + 4, y + 4.4);
           y += rowH;
-        }
-        y += 6;
+        });
+        y += 5;
 
         // Mensagem motivacional
         docPdf.setFont('helvetica', 'italic');
@@ -266,64 +342,66 @@ export default function AdminImprimirFichas() {
         docPdf.text(motivLines, marginX + 6, y + 6.5);
         y += motivH + 8;
 
-        // Programação do dia
-        if (y + 8 > pageH - marginBottom) newPage();
+        // Programação do dia - mesmo padrão navy/stripe das outras seções.
+        if (y + 7 > pageH - marginBottom) newPage();
         docPdf.setFillColor(...NAVY);
-        docPdf.rect(marginX, y, usableW, 8, 'F');
+        docPdf.rect(marginX, y, usableW, 7, 'F');
         docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(9);
+        docPdf.setFontSize(8.5);
         docPdf.setTextColor(255, 255, 255);
-        docPdf.text('PROGRAMAÇÃO DO DIA 12/09 (SÁBADO)', marginX + 3, y + 5.6);
-        y += 8 + 4;
+        docPdf.text('PROGRAMAÇÃO DO DIA 12/09 (SÁBADO)', marginX + 3, y + 4.9);
+        y += 7;
 
-        const horaColW = 30;
+        const horaColW = 28;
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(9);
         PROGRAMACAO.forEach((item, idx) => {
-          const isGreen = idx % 2 === 0;
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(9);
-          const tituloLines = docPdf.splitTextToSize(item.titulo, usableW - horaColW - 10);
+          docPdf.setFontSize(8.5);
+          const tituloLines = docPdf.splitTextToSize(item.titulo, usableW - horaColW - 8);
           docPdf.setFont('helvetica', 'normal');
-          docPdf.setFontSize(7.5);
-          const subLines = item.sub ? docPdf.splitTextToSize(item.sub, usableW - horaColW - 10) : [];
+          docPdf.setFontSize(7.3);
+          const subLines = item.sub ? docPdf.splitTextToSize(item.sub, usableW - horaColW - 8) : [];
           const lineCount = tituloLines.length + subLines.length;
-          const rowH = Math.max(10, lineCount * 4 + 4);
+          const rowH = Math.max(9, lineCount * 3.8 + 4);
 
           if (y + rowH > pageH - marginBottom) newPage();
 
-          docPdf.setFillColor(isGreen ? GREEN[0] : 255, isGreen ? GREEN[1] : 255, isGreen ? GREEN[2] : 255);
-          docPdf.roundedRect(marginX, y, usableW, rowH, 2, 2, 'F');
-          if (!isGreen) {
-            docPdf.setDrawColor(226, 232, 240);
-            docPdf.setLineWidth(0.2);
-            docPdf.roundedRect(marginX, y, usableW, rowH, 2, 2, 'D');
+          if (idx % 2 === 1) {
+            docPdf.setFillColor(...STRIPE);
+            docPdf.rect(marginX, y, usableW, rowH, 'F');
           }
+          docPdf.setDrawColor(226, 232, 240);
+          docPdf.setLineWidth(0.2);
+          docPdf.line(marginX + horaColW, y, marginX + horaColW, y + rowH);
 
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(9);
-          docPdf.setTextColor(...NAVY);
+          docPdf.setFontSize(8);
+          docPdf.setTextColor(21, 128, 61);
           const horaLines = docPdf.splitTextToSize(item.hora, horaColW - 4);
-          docPdf.text(horaLines, marginX + 3, y + rowH / 2 - (horaLines.length - 1) * 2 + 1.5);
+          docPdf.text(horaLines, marginX + 3, y + rowH / 2 - (horaLines.length - 1) * 1.8 + 1.2);
 
-          let subY = y + 5.5;
+          let subY = y + 4.3;
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(9);
+          docPdf.setFontSize(8.5);
           docPdf.setTextColor(...NAVY);
           docPdf.text(tituloLines, marginX + horaColW + 4, subY);
-          subY += tituloLines.length * 4;
+          subY += tituloLines.length * 3.8;
           if (subLines.length) {
             docPdf.setFont('helvetica', 'normal');
-            docPdf.setFontSize(7.5);
-            docPdf.setTextColor(51, 65, 85);
-            docPdf.text(subLines, marginX + horaColW + 4, subY + 1.5);
+            docPdf.setFontSize(7.3);
+            docPdf.setTextColor(100, 116, 139);
+            docPdf.text(subLines, marginX + horaColW + 4, subY + 1.2);
           }
 
-          y += rowH + 3;
+          y += rowH;
         });
+        y += 5;
 
         docPdf.setFont('helvetica', 'italic');
         docPdf.setFontSize(7);
         docPdf.setTextColor(148, 163, 184);
-        const footerY = Math.min(y + 6, pageH - 6);
+        const footerY = Math.min(y + 4, pageH - 6);
         docPdf.text('Documento gerado automaticamente pelo sistema MCU Night Run.', marginX, footerY);
       }
 
@@ -345,7 +423,8 @@ export default function AdminImprimirFichas() {
         <div>
           <h1 style={{ fontSize: '1.8rem', fontWeight: 900, color: '#071A45', marginBottom: 4 }}>Imprimir Fichas</h1>
           <p style={{ color: '#64748b', fontWeight: 500 }}>
-            Uma ficha por atleta confirmado ({athletes.length}), com os itens do kit, mensagem motivacional e a programação do dia 12/09.
+            Uma ficha por atleta confirmado ({athletes.length}), com dados completos, prova/kit, itens do kit,
+            mensagem motivacional e a programação do dia 12/09.
           </p>
         </div>
         <button

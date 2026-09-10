@@ -3401,6 +3401,7 @@ async function maybeTriggerThousandBroadcast(env, ctx, count) {
 
 const ROSTER_CACHE_KEY = "roster:confirmed:cache:v1";
 const ROSTER_CACHE_TTL_SECONDS = 180; // 3 minutos
+const ROSTER_FALLBACK_KEY = "roster:confirmed:fallback:v1"; // sem TTL - so atualizado em sucesso
 
 // As paginas publicas /atletas e /endereco precisam da lista de confirmados (nome, foto,
 // cpf, telefone, status de endereco) pra buscar/selecionar o atleta. Antes, cada uma fazia
@@ -3430,7 +3431,23 @@ async function getCachedConfirmedRoster(env, { forceRefresh = false } = {}) {
   });
   const regsData = await res.json().catch(() => []);
 
-  const athletes = (Array.isArray(regsData) ? regsData : [])
+  // A consulta pode falhar (ex: cota diaria de leitura do Firestore esgotada) e devolver um
+  // objeto de erro em vez de um array - sem essa checagem, isso virava silenciosamente uma
+  // lista "0 confirmados" que ficava em cache por 3 minutos, quebrando a busca pra todo mundo
+  // (site publico e a mesa de retirada) mesmo com a cota so temporariamente indisponivel. Em
+  // caso de falha, serve a ultima lista boa conhecida (sem TTL) em vez de uma lista vazia.
+  if (!res.ok || !Array.isArray(regsData)) {
+    console.error("[Roster] Firestore query failed, falling back to last known good roster", { status: res.status, regsData });
+    if (env.NIGHTRUN_STORAGE) {
+      const fallback = await env.NIGHTRUN_STORAGE.get(ROSTER_FALLBACK_KEY);
+      if (fallback) {
+        try { return JSON.parse(fallback); } catch { /* fallback corrompido, cai no vazio abaixo */ }
+      }
+    }
+    return { generatedAt: new Date().toISOString(), count: 0, athletes: [], error: "roster_fetch_failed" };
+  }
+
+  const athletes = regsData
     .filter(r => r.document)
     .map(r => {
       const f = r.document.fields || {};
@@ -3463,6 +3480,9 @@ async function getCachedConfirmedRoster(env, { forceRefresh = false } = {}) {
 
   if (env.NIGHTRUN_STORAGE) {
     await env.NIGHTRUN_STORAGE.put(ROSTER_CACHE_KEY, JSON.stringify(payload), { expirationTtl: ROSTER_CACHE_TTL_SECONDS });
+    // Sem TTL - fica disponivel como fallback pra proxima vez que a consulta ao Firestore
+    // falhar (ex: cota esgotada), mesmo que isso demore mais que o TTL do cache normal.
+    await env.NIGHTRUN_STORAGE.put(ROSTER_FALLBACK_KEY, JSON.stringify(payload));
   }
 
   return payload;

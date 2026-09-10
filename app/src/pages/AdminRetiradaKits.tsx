@@ -5,7 +5,7 @@ import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import { getCamisetaShortLabel } from '../utils/camisetaUtils';
-import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History } from 'lucide-react';
+import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 
@@ -109,14 +109,54 @@ export default function AdminRetiradaKits() {
   const kitNomeDe = (r: Reg) => resolveKitNome(kits, r.kit, 'Kit Único');
 
   // Nem todo kit inclui camiseta (ex: Kit Extra é só número/chip/medalha) - só mostra o
-  // tamanho no card quando o kit da pessoa realmente tem "CAMISETA" entre os itens.
-  const tamanhoCamisetaDe = (r: Reg) => {
+  // tamanho no card quando o kit da pessoa realmente tem "CAMISETA" entre os itens. O tipo
+  // (Normal/Baby Look/Infantil) vem do cadastro do tamanho em si, não do texto do tamanho.
+  const camisetaInfoDe = (r: Reg): { tamanho: string; tipo: string } | null => {
     const kitDoc = kits.find(k => k.id === r.kit);
     const temCamiseta = kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA'));
-    if (!temCamiseta || !r.tamanhoCamiseta) return '';
+    if (!temCamiseta || !r.tamanhoCamiseta) return null;
     const item = camisetas.find(c => c.id === r.tamanhoCamiseta);
-    return getCamisetaShortLabel(r.tamanhoCamiseta, item);
+    const tamanho = getCamisetaShortLabel(r.tamanhoCamiseta, item);
+    if (!tamanho) return null;
+    const tipo = item?.categoria === 'infantil' ? 'Infantil' : (item?.tipo === 'Baby Look' ? 'Baby Look' : 'Normal');
+    return { tamanho, tipo };
   };
+
+  const CAMISETA_TIPO_COLORS: Record<string, [string, string]> = {
+    Normal: ['#eff6ff', '#2563eb'],
+    'Baby Look': ['#fdf2f8', '#db2777'],
+    Infantil: ['#f0fdf4', '#16a34a'],
+  };
+
+  const CamisetaBadge = ({ r }: { r: Reg }) => {
+    const info = camisetaInfoDe(r);
+    if (!info) return null;
+    const [bg, fg] = CAMISETA_TIPO_COLORS[info.tipo] || CAMISETA_TIPO_COLORS.Normal;
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4, background: bg, color: fg,
+        fontWeight: 900, fontSize: '0.75rem', padding: '4px 10px', borderRadius: 8, marginTop: 4,
+      }}>
+        {info.tamanho} · {info.tipo}
+      </span>
+    );
+  };
+
+  const VerDetalhesLink = ({ r }: { r: Reg }) => (
+    <a
+      href={`/admin/inscritos/${r.id}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Ver detalhes do atleta em nova aba"
+      style={{
+        background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 10,
+        padding: '10px 12px', display: 'inline-flex', alignItems: 'center', gap: 6,
+        fontWeight: 800, fontSize: '0.72rem', textDecoration: 'none', whiteSpace: 'nowrap',
+      }}
+    >
+      <ExternalLink size={14} /> DETALHES
+    </a>
+  );
 
   const registrarRetirada = async (r: Reg, nomeRetirante: string, terceiro: boolean) => {
     setProcessingId(r.id);
@@ -260,7 +300,10 @@ export default function AdminRetiradaKits() {
                   <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '10px 14px' }}>
                     <div>
                       <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
-                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{kitNomeDe(r)}{tamanhoCamisetaDe(r) ? ` (${tamanhoCamisetaDe(r)})` : ''}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                        {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                        {camisetaInfoDe(r) ? ` · ${camisetaInfoDe(r)!.tamanho} (${camisetaInfoDe(r)!.tipo})` : ''}
+                      </div>
                     </div>
                     <button onClick={() => toggleMultipla(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
                       <X size={18} />
@@ -321,14 +364,18 @@ export default function AdminRetiradaKits() {
                   <div style={{ flex: 1, minWidth: 160 }}>
                     <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                     <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
-                      {kitNomeDe(r)}{tamanhoCamisetaDe(r) ? ` (${tamanhoCamisetaDe(r)})` : ''}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                      {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
                       {r.endereco?.cidade ? ` · ${r.endereco.cidade}${r.endereco.uf ? `/${r.endereco.uf}` : ''}` : ''}
                     </div>
+                    <div><CamisetaBadge r={r} /></div>
                     <div style={{ fontSize: '0.72rem', color: '#16a34a', fontWeight: 700, marginTop: 4 }}>
                       Retirado por {(r.kitRetiradoPor || r.nome).toUpperCase()}{r.kitRetiradoTerceiro ? ' (terceiro)' : ''}
                     </div>
                   </div>
-                  <div style={{ fontWeight: 900, color: '#071A45', fontSize: '1rem', whiteSpace: 'nowrap' }}>{hora}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                    <div style={{ fontWeight: 900, color: '#071A45', fontSize: '1rem', whiteSpace: 'nowrap' }}>{hora}</div>
+                    <VerDetalhesLink r={r} />
+                  </div>
                 </div>
               );
             })}
@@ -360,38 +407,42 @@ export default function AdminRetiradaKits() {
                 <div style={{ flex: 1, minWidth: 160 }}>
                   <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                   <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
-                    {kitNomeDe(r)}{tamanhoCamisetaDe(r) ? ` (${tamanhoCamisetaDe(r)})` : ''}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                    {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
                     {r.endereco?.cidade ? ` · ${r.endereco.cidade}${r.endereco.uf ? `/${r.endereco.uf}` : ''}` : ''}
                   </div>
+                  <div><CamisetaBadge r={r} /></div>
                   {jaRetirado && (
                     <div style={{ fontSize: '0.72rem', color: '#16a34a', fontWeight: 700, marginTop: 4 }}>
                       Retirado por {(r.kitRetiradoPor || r.nome).toUpperCase()}{r.kitRetiradoTerceiro ? ' (terceiro)' : ''}
                     </div>
                   )}
                 </div>
-                {modo === 'unica' ? (
-                  <button
-                    onClick={() => handleClickRetirarUnica(r)}
-                    disabled={processingId === r.id}
-                    style={{
-                      background: jaRetirado ? '#f1f5f9' : '#071A45', color: jaRetirado ? '#64748b' : '#fff',
-                      border: 'none', borderRadius: 10, padding: '12px 18px', fontWeight: 800, fontSize: '0.8rem',
-                      cursor: processingId === r.id ? 'wait' : 'pointer', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {jaRetirado ? 'JÁ RETIRADO' : 'CONFIRMAR RETIRADA'}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => toggleMultipla(r)}
-                    style={{
-                      background: selecionado ? '#071A45' : '#f1f5f9', color: selecionado ? '#fff' : '#334155',
-                      border: 'none', borderRadius: 10, padding: '12px 18px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {selecionado ? 'SELECIONADO' : 'ADICIONAR'}
-                  </button>
-                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'stretch' }}>
+                  {modo === 'unica' ? (
+                    <button
+                      onClick={() => handleClickRetirarUnica(r)}
+                      disabled={processingId === r.id}
+                      style={{
+                        background: jaRetirado ? '#f1f5f9' : '#071A45', color: jaRetirado ? '#64748b' : '#fff',
+                        border: 'none', borderRadius: 10, padding: '12px 18px', fontWeight: 800, fontSize: '0.8rem',
+                        cursor: processingId === r.id ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {jaRetirado ? 'JÁ RETIRADO' : 'CONFIRMAR RETIRADA'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => toggleMultipla(r)}
+                      style={{
+                        background: selecionado ? '#071A45' : '#f1f5f9', color: selecionado ? '#fff' : '#334155',
+                        border: 'none', borderRadius: 10, padding: '12px 18px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {selecionado ? 'SELECIONADO' : 'ADICIONAR'}
+                    </button>
+                  )}
+                  <VerDetalhesLink r={r} />
+                </div>
               </div>
             );
           })}

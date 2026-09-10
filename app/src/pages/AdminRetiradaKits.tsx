@@ -304,15 +304,20 @@ export default function AdminRetiradaKits() {
                 {selecionadosArr.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
                     {selecionadosArr.map(r => (
-                      <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '10px 14px' }}>
-                        <div>
-                          <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
-                          <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                            {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
-                            {camisetaInfoDe(r) ? ` · ${camisetaInfoDe(r)!.tamanho} (${camisetaInfoDe(r)!.tipo})` : ''}
+                      <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '10px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                          <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, overflow: 'hidden', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {r.fotoUrl ? <img src={r.fotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <UserIcon size={18} color="#16a34a" />}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
+                            <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                              {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                              {camisetaInfoDe(r) ? ` · ${camisetaInfoDe(r)!.tamanho} (${camisetaInfoDe(r)!.tipo})` : ''}
+                            </div>
                           </div>
                         </div>
-                        <button onClick={() => toggleMultipla(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
+                        <button onClick={() => toggleMultipla(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', flexShrink: 0 }}>
                           <X size={18} />
                         </button>
                       </div>

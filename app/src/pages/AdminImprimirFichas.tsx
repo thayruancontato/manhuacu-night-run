@@ -5,7 +5,7 @@ import { db } from '../firebase';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import { getCamisetaShortLabel } from '../utils/camisetaUtils';
 import { AdminPageSkeleton } from '../components/Skeleton';
-import { FileDown, User, Package } from 'lucide-react';
+import { FileDown, User } from 'lucide-react';
 import '../styles/admin.css';
 
 // Programação oficial do dia 12/09 (sábado) - conteúdo fixo do evento, impresso em toda ficha
@@ -21,10 +21,8 @@ const PROGRAMACAO = [
 ];
 
 const MENSAGEM_MOTIVACIONAL =
-  'Chegou a hora! Depois de meses de treino e expectativa, o grande dia finalmente chegou. ' +
-  'Sábado, dia 12, Manhuaçu vai parar pra ver você brilhar - seja na largada, na chegada ou em cada ' +
-  'passo no meio do caminho. Guarde seu kit com carinho, vista a camisa com orgulho e venha viver ' +
-  'uma noite histórica. Nos vemos na arena!';
+  'Chegou a hora! O grande dia finalmente chegou - sábado, dia 12, Manhuaçu vai parar pra ver ' +
+  'você brilhar. Guarde seu kit com carinho e venha viver uma noite histórica!';
 
 const formatDateBRSimple = (value: any): string => {
   const date = value?.toDate?.() || new Date(value);
@@ -132,8 +130,13 @@ export default function AdminImprimirFichas() {
         return { data: canvas.toDataURL('image/png'), aspect: canvas.width / canvas.height };
       };
 
-      const title1 = makeTitleImg('SUA FICHA CHEGOU!');
-      const titleImgH = 11;
+      const titleImgH = 9;
+      const titleCache = new Map<string, { data: string; aspect: number }>();
+      const getTitleImg = (primeiroNome: string) => {
+        const text = `${primeiroNome.toUpperCase()}, SEU KIT CHEGOU!`;
+        if (!titleCache.has(text)) titleCache.set(text, makeTitleImg(text));
+        return titleCache.get(text)!;
+      };
 
       const photoCache = new Map<string, string | null>();
       const loadPhoto = async (url?: string): Promise<string | null> => {
@@ -195,62 +198,70 @@ export default function AdminImprimirFichas() {
         y = headerH + 10;
 
         const fotoBase64 = await loadPhoto(a.fotoUrl);
+        const primeiroNome = (a.nome || 'ATLETA').trim().split(/\s+/)[0];
+        const titleImg = getTitleImg(primeiroNome);
+        const kitDoc = kitDe(a);
+        const temCamiseta = Boolean(kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA')));
 
-        // Título + foto
-        docPdf.addImage(title1.data, 'PNG', marginX, y - titleImgH + 3, titleImgH * title1.aspect, titleImgH, undefined, 'FAST');
+        // Título personalizado (pequeno, pra economizar espaço - a ficha inteira precisa
+        // caber numa única página).
+        docPdf.addImage(titleImg.data, 'PNG', marginX, y, titleImgH * titleImg.aspect, titleImgH, undefined, 'FAST');
+        y += titleImgH + 4;
+
+        // Foto à esquerda do nome, dentro do quadro azul, com um respiro entre as duas -
+        // um único bloco compacto que já cobre número de inscrição, modalidade, kit e
+        // camiseta (quando o kit inclui uma).
+        const photoSize = 20;
+        const boxH = photoSize;
         if (fotoBase64) {
           try {
-            const photoSize = 22;
-            const photoX = pageW - marginX - photoSize;
             const photoFormat = fotoBase64.includes('image/png') ? 'PNG' : 'JPEG';
-            docPdf.addImage(fotoBase64, photoFormat, photoX, y - photoSize + 4, photoSize, photoSize, undefined, 'FAST');
+            docPdf.addImage(fotoBase64, photoFormat, marginX, y, photoSize, photoSize, undefined, 'FAST');
             docPdf.setDrawColor(...NAVY);
             docPdf.setLineWidth(0.6);
-            docPdf.rect(photoX, y - photoSize + 4, photoSize, photoSize, 'D');
+            docPdf.rect(marginX, y, photoSize, photoSize, 'D');
           } catch { /* segue sem foto */ }
         }
-        y += 6;
+        const boxX = fotoBase64 ? marginX + photoSize + 5 : marginX;
+        const boxW = usableW - (boxX - marginX);
+        docPdf.setFillColor(...NAVY);
+        docPdf.roundedRect(boxX, y, boxW, boxH, 3, 3, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(11.5);
+        docPdf.setTextColor(255, 255, 255);
+        const nomeLines = docPdf.splitTextToSize(a.nome.toUpperCase(), boxW - 10);
+        docPdf.text(nomeLines[0], boxX + 5, y + 8);
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(8);
+        docPdf.setTextColor(...GREEN);
+        const linhaInfo = [
+          a.numeroInscricao ? `Nº ${a.numeroInscricao}` : '',
+          modalidadeNomeDe(a),
+          kitNomeDe(a),
+          temCamiseta && camisetaLabelDe(a) ? `Camiseta ${camisetaLabelDe(a)}` : '',
+        ].filter(Boolean).join('  ·  ');
+        const linhaInfoLines = docPdf.splitTextToSize(linhaInfo, boxW - 10);
+        docPdf.text(linhaInfoLines.slice(0, 2), boxX + 5, y + 15);
+        y += boxH + 5;
 
-        docPdf.setFont('helvetica', 'italic');
-        docPdf.setFontSize(9);
-        docPdf.setTextColor(100, 116, 139);
-        docPdf.text('MCU Night Run 2026 · 12/09/2026 (sábado) · Manhuaçu/MG', marginX, y);
-        y += 9;
-
-        // Número de inscrição em destaque, mesmo padrão do comprovante de inscrição
-        if (a.numeroInscricao) {
-          docPdf.setFillColor(...NAVY);
-          docPdf.roundedRect(marginX, y, usableW, 16, 3, 3, 'F');
-          docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(7.5);
-          docPdf.setTextColor(255, 255, 255);
-          docPdf.text('NÚMERO DA INSCRIÇÃO', marginX + 6, y + 6.5);
-          docPdf.setFont('courier', 'bold');
-          docPdf.setFontSize(14);
-          docPdf.setTextColor(...GREEN);
-          docPdf.text(String(a.numeroInscricao), marginX + 6, y + 13);
-          y += 16 + 6;
-        }
-
-        // Duas colunas por linha (label em cima, valor embaixo, quebrando linha se
-        // precisar) - mesmo padrão do comprovante de inscrição - com quebra de página
-        // automática se uma seção não couber, garantindo que nada seja cortado.
+        // Duas colunas por linha (label em cima, valor embaixo) - mesmo padrão do
+        // comprovante de inscrição. Uma seção só, combinando dados pessoais e da prova,
+        // pra economizar altura (menos um cabeçalho de seção repetido).
         const colGap = 6;
         const colW = (usableW - colGap) / 2;
         const col2X = marginX + colW + colGap;
-        const valueLineH = 4.1;
+        const valueLineH = 3.4;
 
         const drawInfoSection = (title: string, rows: [string, any][]) => {
           const visibleRows = rows.filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
           if (visibleRows.length === 0) return;
-          if (y + 7 > pageH - marginBottom) newPage();
           docPdf.setFillColor(...NAVY);
-          docPdf.rect(marginX, y, usableW, 7, 'F');
+          docPdf.rect(marginX, y, usableW, 6, 'F');
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(8.5);
+          docPdf.setFontSize(7.5);
           docPdf.setTextColor(255, 255, 255);
-          docPdf.text(title, marginX + 3, y + 4.9);
-          y += 7;
+          docPdf.text(title, marginX + 3, y + 4.2);
+          y += 6;
 
           for (let idx = 0; idx < visibleRows.length; idx += 2) {
             const left = visibleRows[idx];
@@ -258,9 +269,7 @@ export default function AdminImprimirFichas() {
             const leftLines = docPdf.splitTextToSize(String(left[1]), colW - 4);
             const rightLines = right ? docPdf.splitTextToSize(String(right[1]), colW - 4) : [];
             const lineCount = Math.max(leftLines.length, rightLines.length, 1);
-            const rowH = 3.6 + lineCount * valueLineH + 1.5;
-
-            if (y + rowH > pageH - marginBottom) newPage();
+            const rowH = 3 + lineCount * valueLineH + 1;
 
             if ((idx / 2) % 2 === 1) {
               docPdf.setFillColor(...STRIPE);
@@ -268,140 +277,131 @@ export default function AdminImprimirFichas() {
             }
             const drawCell = (x: number, label: string, lines: string[]) => {
               docPdf.setFont('helvetica', 'bold');
-              docPdf.setFontSize(7);
+              docPdf.setFontSize(6.3);
               docPdf.setTextColor(100, 116, 139);
-              docPdf.text(label.toUpperCase(), x + 3, y + 3.6);
+              docPdf.text(label.toUpperCase(), x + 3, y + 3);
               docPdf.setFont('helvetica', 'normal');
-              docPdf.setFontSize(9);
+              docPdf.setFontSize(8);
               docPdf.setTextColor(...NAVY);
-              docPdf.text(lines, x + 3, y + 3.6 + valueLineH);
+              docPdf.text(lines, x + 3, y + 3 + valueLineH);
             };
             drawCell(marginX, left[0], leftLines);
             if (right) drawCell(col2X, right[0], rightLines);
             y += rowH;
           }
-          y += 5;
+          y += 3;
         };
 
-        drawInfoSection('DADOS DO ATLETA', [
-          ['Nome completo', a.nome],
+        drawInfoSection('SEUS DADOS E DA PROVA', [
           ['CPF', a.cpf],
           ['Data de nascimento', a.dataNascimento ? formatDateBRSimple(a.dataNascimento) : ''],
           ['Sexo', a.sexo === 'M' ? 'Masculino' : a.sexo === 'F' ? 'Feminino' : ''],
           ['WhatsApp', a.telefone],
           ['E-mail', a.email],
-        ]);
-
-        drawInfoSection('PROVA & KIT', [
-          ['Modalidade', modalidadeNomeDe(a)],
           ['Distância', modalidadeDistanciaDe(a)],
           ['Categoria', a.categoria === 'infantil' ? 'Infantil' : 'Adulto / adolescente'],
-          ['Kit', kitNomeDe(a)],
-          ['Tamanho da camiseta', camisetaLabelDe(a)],
           ['Equipe', a.integranteEquipe === 'sim' ? (a.equipeNome || 'Sim') : 'Não'],
         ]);
 
-        // Itens do kit - mesmo padrão navy/stripe, uma coluna por item.
-        const kitDoc = kitDe(a);
+        // Itens do kit - navy/stripe, em duas colunas pra economizar altura.
         const itens = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens do kit a confirmar.'];
-        if (y + 7 > pageH - marginBottom) newPage();
         docPdf.setFillColor(...NAVY);
-        docPdf.rect(marginX, y, usableW, 7, 'F');
+        docPdf.rect(marginX, y, usableW, 6, 'F');
         docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(8.5);
+        docPdf.setFontSize(7.5);
         docPdf.setTextColor(255, 255, 255);
-        docPdf.text(`ITENS DO SEU KIT (${kitNomeDe(a).toUpperCase()})`, marginX + 3, y + 4.9);
-        y += 7;
+        docPdf.text(`ITENS DO SEU KIT (${kitNomeDe(a).toUpperCase()})`, marginX + 3, y + 4.2);
+        y += 6;
 
         docPdf.setFont('helvetica', 'normal');
-        docPdf.setFontSize(9.5);
-        itens.forEach((item, idx) => {
-          const lines = docPdf.splitTextToSize(`•  ${item}`, usableW - 8);
-          const rowH = lines.length * 4.6 + 2.6;
-          if (y + rowH > pageH - marginBottom) newPage();
-          if (idx % 2 === 1) {
+        docPdf.setFontSize(8);
+        for (let idx = 0; idx < itens.length; idx += 2) {
+          const itemL = itens[idx] || '';
+          const itemR = itens[idx + 1] || '';
+          const linesL = itemL ? docPdf.splitTextToSize(`•  ${itemL}`, colW - 4) : [];
+          const linesR = itemR ? docPdf.splitTextToSize(`•  ${itemR}`, colW - 4) : [];
+          const lineCount = Math.max(linesL.length, linesR.length, 1);
+          const rowH = lineCount * 3.6 + 1.6;
+          if ((idx / 2) % 2 === 1) {
             docPdf.setFillColor(...STRIPE);
             docPdf.rect(marginX, y, usableW, rowH, 'F');
           }
           docPdf.setTextColor(...NAVY);
-          docPdf.text(lines, marginX + 4, y + 4.4);
+          if (linesL.length) docPdf.text(linesL, marginX + 3, y + 3);
+          if (linesR.length) docPdf.text(linesR, col2X + 3, y + 3);
           y += rowH;
-        });
-        y += 5;
+        }
+        y += 4;
 
         // Mensagem motivacional
         docPdf.setFont('helvetica', 'italic');
-        docPdf.setFontSize(9.5);
-        const motivLines = docPdf.splitTextToSize(MENSAGEM_MOTIVACIONAL, usableW - 12);
-        const motivH = motivLines.length * 4.4 + 10;
-        if (y + motivH > pageH - marginBottom) newPage();
+        docPdf.setFontSize(8.3);
+        const motivLines = docPdf.splitTextToSize(MENSAGEM_MOTIVACIONAL, usableW - 10);
+        const motivH = motivLines.length * 3.8 + 6;
         docPdf.setFillColor(240, 253, 244);
         docPdf.setDrawColor(...GREEN);
         docPdf.roundedRect(marginX, y, usableW, motivH, 3, 3, 'FD');
         docPdf.setTextColor(...NAVY);
-        docPdf.text(motivLines, marginX + 6, y + 6.5);
-        y += motivH + 8;
+        docPdf.text(motivLines, marginX + 5, y + 5.2);
+        y += motivH + 4;
 
-        // Programação do dia - mesmo padrão navy/stripe das outras seções.
-        if (y + 7 > pageH - marginBottom) newPage();
+        // Programação do dia - blocos coloridos (verde/branco alternados), no mesmo
+        // espírito visual do material de divulgação do evento.
         docPdf.setFillColor(...NAVY);
-        docPdf.rect(marginX, y, usableW, 7, 'F');
+        docPdf.rect(marginX, y, usableW, 6, 'F');
         docPdf.setFont('helvetica', 'bold');
-        docPdf.setFontSize(8.5);
+        docPdf.setFontSize(7.5);
         docPdf.setTextColor(255, 255, 255);
-        docPdf.text('PROGRAMAÇÃO DO DIA 12/09 (SÁBADO)', marginX + 3, y + 4.9);
-        y += 7;
+        docPdf.text('PROGRAMAÇÃO DO DIA 12/09 (SÁBADO)', marginX + 3, y + 4.2);
+        y += 6 + 2.5;
 
-        const horaColW = 28;
-        docPdf.setFont('helvetica', 'normal');
-        docPdf.setFontSize(9);
+        const horaColW = 24;
         PROGRAMACAO.forEach((item, idx) => {
+          const isGreen = idx % 2 === 0;
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(8.5);
+          docPdf.setFontSize(7.8);
           const tituloLines = docPdf.splitTextToSize(item.titulo, usableW - horaColW - 8);
           docPdf.setFont('helvetica', 'normal');
-          docPdf.setFontSize(7.3);
+          docPdf.setFontSize(6.6);
           const subLines = item.sub ? docPdf.splitTextToSize(item.sub, usableW - horaColW - 8) : [];
           const lineCount = tituloLines.length + subLines.length;
-          const rowH = Math.max(9, lineCount * 3.8 + 4);
+          const rowH = Math.max(7.5, lineCount * 3.3 + 2.6);
 
-          if (y + rowH > pageH - marginBottom) newPage();
-
-          if (idx % 2 === 1) {
-            docPdf.setFillColor(...STRIPE);
-            docPdf.rect(marginX, y, usableW, rowH, 'F');
+          docPdf.setFillColor(...(isGreen ? GREEN : [255, 255, 255] as [number, number, number]));
+          docPdf.roundedRect(marginX, y, usableW, rowH, 1.5, 1.5, 'F');
+          if (!isGreen) {
+            docPdf.setDrawColor(226, 232, 240);
+            docPdf.setLineWidth(0.2);
+            docPdf.roundedRect(marginX, y, usableW, rowH, 1.5, 1.5, 'D');
           }
-          docPdf.setDrawColor(226, 232, 240);
-          docPdf.setLineWidth(0.2);
-          docPdf.line(marginX + horaColW, y, marginX + horaColW, y + rowH);
 
           docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(8);
-          docPdf.setTextColor(21, 128, 61);
-          const horaLines = docPdf.splitTextToSize(item.hora, horaColW - 4);
-          docPdf.text(horaLines, marginX + 3, y + rowH / 2 - (horaLines.length - 1) * 1.8 + 1.2);
-
-          let subY = y + 4.3;
-          docPdf.setFont('helvetica', 'bold');
-          docPdf.setFontSize(8.5);
+          docPdf.setFontSize(7.5);
           docPdf.setTextColor(...NAVY);
-          docPdf.text(tituloLines, marginX + horaColW + 4, subY);
-          subY += tituloLines.length * 3.8;
+          const horaLines = docPdf.splitTextToSize(item.hora, horaColW - 4);
+          docPdf.text(horaLines, marginX + 2.5, y + rowH / 2 - (horaLines.length - 1) * 1.6 + 1.1);
+
+          let subY = y + 3.6;
+          docPdf.setFont('helvetica', 'bold');
+          docPdf.setFontSize(7.8);
+          docPdf.setTextColor(...NAVY);
+          docPdf.text(tituloLines, marginX + horaColW + 3, subY);
+          subY += tituloLines.length * 3.3;
           if (subLines.length) {
             docPdf.setFont('helvetica', 'normal');
-            docPdf.setFontSize(7.3);
-            docPdf.setTextColor(100, 116, 139);
-            docPdf.text(subLines, marginX + horaColW + 4, subY + 1.2);
+            docPdf.setFontSize(6.6);
+            docPdf.setTextColor(isGreen ? 21 : 100, isGreen ? 78 : 116, isGreen ? 46 : 139);
+            docPdf.text(subLines, marginX + horaColW + 3, subY + 1);
           }
 
-          y += rowH;
+          y += rowH + 1.2;
         });
-        y += 5;
+        y += 3;
 
         docPdf.setFont('helvetica', 'italic');
-        docPdf.setFontSize(7);
+        docPdf.setFontSize(6.5);
         docPdf.setTextColor(148, 163, 184);
-        const footerY = Math.min(y + 4, pageH - 6);
+        const footerY = Math.min(y + 3, pageH - 5);
         docPdf.text('Documento gerado automaticamente pelo sistema MCU Night Run.', marginX, footerY);
       }
 
@@ -444,29 +444,68 @@ export default function AdminImprimirFichas() {
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 20,
       }}>
-        {athletes.map(a => (
+        {athletes.map(a => {
+          const kitDoc = kitDe(a);
+          const temCamiseta = Boolean(kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA')));
+          const itens = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens a confirmar'];
+          const primeiroNome = (a.nome || 'ATLETA').trim().split(/\s+/)[0];
+          return (
           <div key={a.id} style={{
-            aspectRatio: '210 / 297', background: '#fff', borderRadius: 8, border: '1px solid #e2e8f0',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.06)', overflow: 'hidden', display: 'flex', flexDirection: 'column',
+            aspectRatio: '210 / 297', background: '#fff', borderRadius: 4, border: '1px solid #e2e8f0',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.06)', overflow: 'hidden', display: 'flex', flexDirection: 'column', fontSize: '2.6px',
           }}>
-            <div style={{ background: 'linear-gradient(135deg, #071A45, #0d2a66)', padding: '6% 8%', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: '20%', aspectRatio: '1', borderRadius: '50%', overflow: 'hidden', background: 'rgba(255,255,255,0.1)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {a.fotoUrl ? <img src={a.fotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <User size={14} color="#fff" />}
+            <div style={{ background: 'linear-gradient(135deg, #071A45, #123068)', height: '9%', flexShrink: 0 }} />
+            <div style={{ padding: '3%', flex: 1, display: 'flex', flexDirection: 'column', gap: '2%', overflow: 'hidden' }}>
+              <div style={{ color: '#071A45', fontWeight: 900, fontSize: '2.6em', textTransform: 'uppercase' }}>
+                {primeiroNome}, seu kit chegou!
               </div>
-              <div style={{ color: '#6BFF2A', fontWeight: 900, fontSize: '0.62rem', textTransform: 'uppercase' }}>Sua Ficha Chegou!</div>
-            </div>
-            <div style={{ padding: '8%', flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <strong style={{ fontSize: '0.68rem', color: '#071A45', lineHeight: 1.2 }}>{a.nome.toUpperCase()}</strong>
-              <span style={{ fontSize: '0.58rem', color: '#64748b' }}>{a.numeroInscricao ? `Nº ${a.numeroInscricao}` : ''}</span>
-              <span style={{ fontSize: '0.58rem', color: '#64748b' }}>{kitNomeDe(a)}</span>
-              <span style={{ fontSize: '0.58rem', color: '#64748b' }}>{modalidadeNomeDe(a)}</span>
-              <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 4, color: '#94a3b8' }}>
-                <Package size={11} />
-                <span style={{ fontSize: '0.55rem' }}>{(kitDe(a)?.itens || []).length} itens</span>
+              <div style={{ display: 'flex', gap: '2%', alignItems: 'stretch' }}>
+                <div style={{ width: '22%', aspectRatio: '1', flexShrink: 0, overflow: 'hidden', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #071A45' }}>
+                  {a.fotoUrl ? <img src={a.fotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <User size={5} color="#2563eb" />}
+                </div>
+                <div style={{ flex: 1, background: '#071A45', borderRadius: '6%', padding: '3%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '4%' }}>
+                  <strong style={{ color: '#fff', fontSize: '2.4em', lineHeight: 1.1 }}>{a.nome.toUpperCase()}</strong>
+                  <span style={{ color: '#6BFF2A', fontSize: '1.9em', fontWeight: 700 }}>
+                    {[a.numeroInscricao ? `Nº ${a.numeroInscricao}` : '', modalidadeNomeDe(a), kitNomeDe(a)].filter(Boolean).join(' · ')}
+                    {temCamiseta && camisetaLabelDe(a) ? ` · Camiseta ${camisetaLabelDe(a)}` : ''}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ background: '#071A45', color: '#fff', fontWeight: 800, fontSize: '2em', padding: '1.5% 3%', marginTop: '2%' }}>SEUS DADOS E DA PROVA</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', fontSize: '1.9em', color: '#334155', gap: '1%' }}>
+                <span>CPF: {a.cpf || '-'}</span>
+                <span>WhatsApp: {a.telefone || '-'}</span>
+                <span>Categoria: {a.categoria === 'infantil' ? 'Infantil' : 'Adulto'}</span>
+                <span>Equipe: {a.integranteEquipe === 'sim' ? (a.equipeNome || 'Sim') : 'Não'}</span>
+              </div>
+
+              <div style={{ background: '#071A45', color: '#fff', fontWeight: 800, fontSize: '2em', padding: '1.5% 3%', marginTop: '2%' }}>
+                ITENS DO KIT ({kitNomeDe(a).toUpperCase()})
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', fontSize: '1.9em', color: '#334155', gap: '1%' }}>
+                {itens.slice(0, 6).map((item, idx) => <span key={idx}>• {item}</span>)}
+              </div>
+
+              <div style={{ background: '#f0fdf4', border: '1px solid #6BFF2A', borderRadius: '4%', padding: '2% 3%', marginTop: '2%', fontSize: '1.8em', fontStyle: 'italic', color: '#071A45' }}>
+                Chegou a hora! Guarde seu kit com carinho e venha viver uma noite histórica!
+              </div>
+
+              <div style={{ background: '#071A45', color: '#fff', fontWeight: 800, fontSize: '2em', padding: '1.5% 3%', marginTop: '2%' }}>PROGRAMAÇÃO 12/09</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5%', marginTop: '1%' }}>
+                {PROGRAMACAO.map((item, idx) => (
+                  <div key={idx} style={{
+                    background: idx % 2 === 0 ? '#6BFF2A' : '#fff', border: idx % 2 === 0 ? 'none' : '1px solid #e2e8f0',
+                    borderRadius: '3px', padding: '1.5% 3%', fontSize: '1.8em', color: '#071A45', fontWeight: 700,
+                  }}>
+                    {item.hora} — {item.titulo}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

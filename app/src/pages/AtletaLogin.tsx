@@ -29,7 +29,27 @@ export default function UnifiedLogin() {
     const cleanEmail = email.toLowerCase().trim();
     const cleanPassword = password.replace(/\D/g, '');
 
+    const STAFF_KITS_EMAIL = 'kits@admin.com';
+
     try {
+      // 0. Conta de staff exclusiva pra retirada de kits - e-mail fixo, sem doc em
+      // nightrun_admins. Cria a conta no primeiro login (mesmo bootstrap do primeiro admin).
+      if (cleanEmail === STAFF_KITS_EMAIL) {
+        try {
+          await signInWithEmailAndPassword(auth, cleanEmail, password);
+        } catch (authError: any) {
+          if (authError.code === 'auth/invalid-credential' || authError.code === 'auth/wrong-password' || authError.code === 'auth/user-not-found') {
+            await createUserWithEmailAndPassword(auth, cleanEmail, password);
+          } else {
+            throw authError;
+          }
+        }
+        localStorage.setItem('nightrun_staff_kits_auth', 'true');
+        showLoading(1000, 'Acessando Retirada de Kits...');
+        setTimeout(() => { window.location.href = '/admin/retirada-kits'; }, 1000);
+        return;
+      }
+
       // 1. TENTAR LOGIN COMO ADMIN
       // (o bootstrap do primeiro admin do sistema já foi feito há muito tempo - checar "existe
       // algum admin?" a cada tentativa de login só gastava 1 leitura extra de Firestore sempre,

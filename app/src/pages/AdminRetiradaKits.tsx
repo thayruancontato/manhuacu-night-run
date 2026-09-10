@@ -45,7 +45,7 @@ export default function AdminRetiradaKits() {
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
-    if (!authLoading && (!user || role !== 'admin')) navigate('/admin/login');
+    if (!authLoading && (!user || role !== 'admin' && role !== 'staff_kits')) navigate('/admin/login');
   }, [user, role, authLoading, navigate]);
 
   useEffect(() => {
@@ -145,10 +145,11 @@ export default function AdminRetiradaKits() {
   const handleLogout = () => {
     signOut(auth).catch(() => {});
     localStorage.removeItem('nightrun_admin_auth');
+    localStorage.removeItem('nightrun_staff_kits_auth');
     navigate('/admin/login');
   };
 
-  if (authLoading || !user || role !== 'admin') return null;
+  if (authLoading || !user || role !== 'admin' && role !== 'staff_kits') return null;
 
   const selecionadosArr = Object.values(selecionadosMultipla);
 

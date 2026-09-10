@@ -4,7 +4,7 @@ import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where }
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
-import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon } from 'lucide-react';
+import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 
@@ -17,6 +17,8 @@ type Reg = {
   kit?: string;
   modalidadeNome?: string;
   categoria?: string;
+  fotoUrl?: string;
+  endereco?: { cidade?: string; uf?: string };
   kitRetiradoEm?: any;
   kitRetiradoPor?: string;
   kitRetiradoTerceiro?: boolean;
@@ -36,7 +38,7 @@ export default function AdminRetiradaKits() {
   const [regs, setRegs] = useState<Reg[]>([]);
   const [kits, setKits] = useState<KitRecord[]>([]);
   const [search, setSearch] = useState('');
-  const [modo, setModo] = useState<'unica' | 'multipla'>('unica');
+  const [modo, setModo] = useState<'unica' | 'multipla' | 'historico'>('unica');
   const [terceiroNome, setTerceiroNome] = useState('');
   const [selecionadosMultipla, setSelecionadosMultipla] = useState<Record<string, Reg>>({});
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -80,6 +82,26 @@ export default function AdminRetiradaKits() {
       .slice(0, 40);
   }, [search, regs]);
 
+  const toMillis = (v: any) => v?.toDate ? v.toDate().getTime() : (v ? new Date(v).getTime() : 0);
+
+  // Histórico ao vivo de retiradas - deriva do mesmo onSnapshot dos confirmados (sem custo
+  // extra de leitura), sempre atualizado assim que qualquer mesa registra uma retirada.
+  const historico = useMemo(() => {
+    const term = normalize(search);
+    const termDigits = onlyDigits(search);
+    return regs
+      .filter(r => Boolean(r.kitRetiradoEm))
+      .filter(r => {
+        if (!term && !termDigits) return true;
+        if (term.length >= 2 && (normalize(r.nome).includes(term) || normalize(r.kitRetiradoPor || '').includes(term))) return true;
+        if (termDigits.length >= 2 && onlyDigits(r.cpf).includes(termDigits)) return true;
+        if (termDigits.length >= 2 && onlyDigits(r.telefone).includes(termDigits)) return true;
+        if (termDigits.length >= 2 && onlyDigits(r.numeroInscricao || '').includes(termDigits)) return true;
+        return false;
+      })
+      .sort((a, b) => toMillis(b.kitRetiradoEm) - toMillis(a.kitRetiradoEm));
+  }, [search, regs]);
+
   const kitNomeDe = (r: Reg) => resolveKitNome(kits, r.kit, 'Kit Único');
 
   const registrarRetirada = async (r: Reg, nomeRetirante: string, terceiro: boolean) => {
@@ -90,7 +112,7 @@ export default function AdminRetiradaKits() {
         kitRetiradoPor: nomeRetirante,
         kitRetiradoTerceiro: terceiro,
       });
-      setFeedback({ text: `Kit de ${r.nome} registrado como retirado.`, type: 'success' });
+      setFeedback({ text: `Kit de ${r.nome.toUpperCase()} registrado como retirado.`, type: 'success' });
       setConfirmarDuplicado(null);
       setSearch('');
     } catch (e) {
@@ -194,6 +216,17 @@ export default function AdminRetiradaKits() {
           >
             <Users size={18} /> Retirada múltipla (terceiro)
           </button>
+          <button
+            onClick={() => setModo('historico')}
+            style={{
+              flex: 1, padding: '14px', borderRadius: 10, border: 'none', fontWeight: 900, fontSize: '0.9rem', cursor: 'pointer',
+              background: modo === 'historico' ? '#fff' : 'transparent', color: modo === 'historico' ? '#071A45' : '#64748b',
+              boxShadow: modo === 'historico' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            <History size={18} /> Histórico ({regs.filter(r => r.kitRetiradoEm).length})
+          </button>
         </div>
 
         {modo === 'multipla' && (
@@ -212,7 +245,7 @@ export default function AdminRetiradaKits() {
                 {selecionadosArr.map(r => (
                   <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '10px 14px' }}>
                     <div>
-                      <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome}</strong>
+                      <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                       <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}</div>
                     </div>
                     <button onClick={() => toggleMultipla(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
@@ -242,7 +275,7 @@ export default function AdminRetiradaKits() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar por nome, CPF, telefone ou número de inscrição..."
+            placeholder={modo === 'historico' ? 'Filtrar histórico por nome, CPF, telefone, nº ou quem retirou...' : 'Buscar por nome, CPF, telefone ou número de inscrição...'}
             autoFocus
             style={{ width: '100%', padding: '16px 16px 16px 48px', borderRadius: 14, border: '2px solid #071A45', fontSize: '1rem', boxSizing: 'border-box' }}
           />
@@ -258,6 +291,36 @@ export default function AdminRetiradaKits() {
           </div>
         )}
 
+        {modo === 'historico' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {historico.length === 0 && (
+              <p style={{ textAlign: 'center', color: '#94a3b8', padding: '20px 0' }}>Nenhuma retirada registrada ainda.</p>
+            )}
+            {historico.map(r => {
+              const data = r.kitRetiradoEm?.toDate ? r.kitRetiradoEm.toDate() : new Date(r.kitRetiradoEm);
+              const hora = Number.isNaN(data.getTime()) ? '--:--' : data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+              return (
+                <div key={r.id} style={{ background: '#fff', borderRadius: 14, padding: 16, border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#dcfce7', color: '#16a34a', overflow: 'hidden' }}>
+                    {r.fotoUrl ? <img src={r.fotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <CheckCircle2 size={22} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 160 }}>
+                    <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
+                      {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                      {r.endereco?.cidade ? ` · ${r.endereco.cidade}${r.endereco.uf ? `/${r.endereco.uf}` : ''}` : ''}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#16a34a', fontWeight: 700, marginTop: 4 }}>
+                      Retirado por {(r.kitRetiradoPor || r.nome).toUpperCase()}{r.kitRetiradoTerceiro ? ' (terceiro)' : ''}
+                    </div>
+                  </div>
+                  <div style={{ fontWeight: 900, color: '#071A45', fontSize: '1rem', whiteSpace: 'nowrap' }}>{hora}</div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+        <>
         {search.trim().length >= 2 && results.length === 0 && (
           <p style={{ textAlign: 'center', color: '#94a3b8', padding: '20px 0' }}>Nenhum confirmado encontrado.</p>
         )}
@@ -274,18 +337,21 @@ export default function AdminRetiradaKits() {
               }}>
                 <div style={{
                   width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: jaRetirado ? '#dcfce7' : '#eff6ff', color: jaRetirado ? '#16a34a' : '#2563eb',
+                  background: jaRetirado ? '#dcfce7' : '#eff6ff', color: jaRetirado ? '#16a34a' : '#2563eb', overflow: 'hidden',
                 }}>
-                  {jaRetirado ? <CheckCircle2 size={22} /> : <UserIcon size={22} />}
+                  {r.fotoUrl ? (
+                    <img src={r.fotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : jaRetirado ? <CheckCircle2 size={22} /> : <UserIcon size={22} />}
                 </div>
                 <div style={{ flex: 1, minWidth: 160 }}>
-                  <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome}</strong>
+                  <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                   <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
                     {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                    {r.endereco?.cidade ? ` · ${r.endereco.cidade}${r.endereco.uf ? `/${r.endereco.uf}` : ''}` : ''}
                   </div>
                   {jaRetirado && (
                     <div style={{ fontSize: '0.72rem', color: '#16a34a', fontWeight: 700, marginTop: 4 }}>
-                      Retirado por {r.kitRetiradoPor || r.nome}{r.kitRetiradoTerceiro ? ' (terceiro)' : ''}
+                      Retirado por {(r.kitRetiradoPor || r.nome).toUpperCase()}{r.kitRetiradoTerceiro ? ' (terceiro)' : ''}
                     </div>
                   )}
                 </div>
@@ -316,6 +382,8 @@ export default function AdminRetiradaKits() {
             );
           })}
         </div>
+        </>
+        )}
       </div>
 
       {confirmarDuplicado && (
@@ -326,8 +394,8 @@ export default function AdminRetiradaKits() {
             </div>
             <h3 style={{ fontSize: '1.05rem', fontWeight: 900, color: '#071A45', marginBottom: 8 }}>Este kit já foi retirado</h3>
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: 20 }}>
-              O kit de <strong>{confirmarDuplicado.nome}</strong> já consta como retirado por{' '}
-              <strong>{confirmarDuplicado.kitRetiradoPor || confirmarDuplicado.nome}</strong>. Confirmar mesmo assim?
+              O kit de <strong>{confirmarDuplicado.nome.toUpperCase()}</strong> já consta como retirado por{' '}
+              <strong>{(confirmarDuplicado.kitRetiradoPor || confirmarDuplicado.nome).toUpperCase()}</strong>. Confirmar mesmo assim?
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setConfirmarDuplicado(null)} style={{ flex: 1, padding: '14px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#fff', fontWeight: 800, cursor: 'pointer' }}>

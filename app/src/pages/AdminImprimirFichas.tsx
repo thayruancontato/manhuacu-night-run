@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { jsPDF } from 'jspdf';
@@ -414,13 +414,6 @@ export default function AdminImprimirFichas() {
     }
   };
 
-  useEffect(() => {
-    if (!loading && atletaId && athletes.length === 1) {
-      generatePdf();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, atletaId, athletes.length]);
-
   if (loading) return <AdminPageSkeleton variant="table" />;
 
   if (atletaId && athletes.length === 0) {
@@ -428,6 +421,22 @@ export default function AdminImprimirFichas() {
       <div style={{ minHeight: '100vh', background: '#f1f5f9', color: '#071A45', padding: '24px 30px' }}>
         <p style={{ color: '#dc2626', fontWeight: 700 }}>Atleta não encontrado ou pagamento não confirmado.</p>
       </div>
+    );
+  }
+
+  // Veio direto do painel de retirada de kits pra imprimir na hora: abre a impressão web
+  // do navegador (Ctrl+P) já com a ficha desse atleta montada em tela, sem gerar PDF pra
+  // baixar - a pessoa manda direto pra impressora pelo diálogo de impressão do navegador.
+  if (atletaId && athletes[0]) {
+    return (
+      <FichaPrintPage
+        atleta={athletes[0]}
+        kitDe={kitDe}
+        kitNomeDe={kitNomeDe}
+        camisetaLabelDe={camisetaLabelDe}
+        modalidadeNomeDe={modalidadeNomeDe}
+        modalidadeDistanciaDe={modalidadeDistanciaDe}
+      />
     );
   }
 
@@ -523,6 +532,177 @@ export default function AdminImprimirFichas() {
           </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Ficha de um unico atleta, montada em HTML/CSS (nao em PDF) pra abrir direto o diálogo de
+// impressão do navegador (Ctrl+P / window.print) com a folha já pronta em tela, no formato
+// A4 - usado pelo botao IMPRIMIR do painel de retirada de kits.
+function FichaPrintPage({ atleta, kitDe, kitNomeDe, camisetaLabelDe, modalidadeNomeDe, modalidadeDistanciaDe }: {
+  atleta: AthleteRow;
+  kitDe: (a: AthleteRow) => KitRecord | undefined;
+  kitNomeDe: (a: AthleteRow) => string;
+  camisetaLabelDe: (a: AthleteRow) => string;
+  modalidadeNomeDe: (a: AthleteRow) => string;
+  modalidadeDistanciaDe: (a: AthleteRow) => string;
+}) {
+  const [photoReady, setPhotoReady] = useState(!atleta.fotoUrl);
+  const printedRef = useRef(false);
+
+  useEffect(() => {
+    if (!photoReady || printedRef.current) return;
+    printedRef.current = true;
+    const t = setTimeout(() => window.print(), 150);
+    return () => clearTimeout(t);
+  }, [photoReady]);
+
+  useEffect(() => {
+    if (!atleta.fotoUrl) return;
+    const fallback = setTimeout(() => setPhotoReady(true), 2500);
+    return () => clearTimeout(fallback);
+  }, [atleta.fotoUrl]);
+
+  const kitDoc = kitDe(atleta);
+  const temCamiseta = Boolean(kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA')));
+  const itens = kitDoc?.itens && kitDoc.itens.length > 0 ? kitDoc.itens : ['Itens do kit a confirmar.'];
+  const primeiroNome = (atleta.nome || 'ATLETA').trim().split(/\s+/)[0];
+  const NAVY = '#071A45';
+  const STRIPE = '#f1f5f9';
+
+  const dadosRaw: [string, string][] = [
+    ['Número da inscrição', atleta.numeroInscricao || ''],
+    ['CPF', atleta.cpf || ''],
+    ['Data de nascimento', atleta.dataNascimento ? formatDateBRSimple(atleta.dataNascimento) : ''],
+    ['Sexo', atleta.sexo === 'M' ? 'Masculino' : atleta.sexo === 'F' ? 'Feminino' : ''],
+    ['WhatsApp', atleta.telefone || ''],
+    ['E-mail', atleta.email || ''],
+    ['Modalidade', modalidadeNomeDe(atleta)],
+    ['Distância', modalidadeDistanciaDe(atleta)],
+    ['Categoria', atleta.categoria === 'infantil' ? 'Infantil' : 'Adulto / adolescente'],
+    ['Equipe', atleta.integranteEquipe === 'sim' ? (atleta.equipeNome || 'Sim') : 'Não'],
+    ['Kit', kitNomeDe(atleta)],
+    ['Tamanho da camiseta', temCamiseta ? camisetaLabelDe(atleta) : ''],
+  ];
+  const dados = dadosRaw.filter(([, v]) => v.trim() !== '');
+
+  return (
+    <div style={{ background: '#e2e8f0', minHeight: '100vh', padding: '16px 0' }}>
+      <style>{`
+        @page { size: A4 portrait; margin: 10mm; }
+        @media print {
+          body * { visibility: hidden; }
+          .ficha-print-page, .ficha-print-page * { visibility: visible; }
+          .ficha-print-page { position: absolute; top: 0; left: 0; box-shadow: none !important; margin: 0 !important; }
+          .ficha-print-toolbar { display: none !important; }
+        }
+      `}</style>
+      <div className="ficha-print-toolbar" style={{
+        maxWidth: 210, width: '100%', margin: '0 auto 12px', display: 'flex', justifyContent: 'center',
+      }}>
+        <button
+          onClick={() => window.print()}
+          style={{
+            background: NAVY, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 20px',
+            fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer', boxShadow: '0 4px 12px rgba(7,26,69,0.25)',
+          }}
+        >
+          IMPRIMIR NOVAMENTE
+        </button>
+      </div>
+      <div className="ficha-print-page" style={{
+        width: '210mm', minHeight: '297mm', background: '#fff', margin: '0 auto',
+        boxShadow: '0 2px 16px rgba(0,0,0,0.15)', padding: '10mm', boxSizing: 'border-box',
+        color: NAVY, fontFamily: 'Arial, Helvetica, sans-serif',
+      }}>
+        <div style={{ fontWeight: 900, fontSize: '1.6rem', textTransform: 'uppercase', marginBottom: 10 }}>
+          {primeiroNome}, seu kit chegou!
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
+          <div style={{
+            width: 90, height: 90, flexShrink: 0, border: `2px solid ${NAVY}`, overflow: 'hidden',
+            background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            {atleta.fotoUrl ? (
+              <img
+                src={atleta.fotoUrl}
+                alt=""
+                crossOrigin="anonymous"
+                onLoad={() => setPhotoReady(true)}
+                onError={() => setPhotoReady(true)}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            ) : <User size={32} color="#2563eb" />}
+          </div>
+          <strong style={{ fontSize: '1.4rem', lineHeight: 1.2 }}>{atleta.nome.toUpperCase()}</strong>
+        </div>
+
+        <div style={{ background: NAVY, color: '#fff', fontWeight: 800, fontSize: '0.85rem', padding: '8px 12px' }}>
+          SEUS DADOS E DA PROVA
+        </div>
+        <div>
+          {Array.from({ length: Math.ceil(dados.length / 2) }).map((_, rowIdx) => {
+            const left = dados[rowIdx * 2];
+            const right = dados[rowIdx * 2 + 1];
+            return (
+              <div key={rowIdx} style={{
+                display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10,
+                background: rowIdx % 2 === 1 ? STRIPE : 'transparent', padding: '6px 12px',
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{left[0]}</div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{left[1]}</div>
+                </div>
+                {right && (
+                  <div>
+                    <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>{right[0]}</div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{right[1]}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ background: NAVY, color: '#fff', fontWeight: 800, fontSize: '0.85rem', padding: '8px 12px', marginTop: 14 }}>
+          ITENS DO SEU KIT ({kitNomeDe(atleta).toUpperCase()})
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: '8px 12px' }}>
+          {itens.map((item, idx) => (
+            <div key={idx} style={{ fontSize: '0.85rem', padding: '2px 0' }}>• {item}</div>
+          ))}
+        </div>
+
+        <div style={{
+          background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px',
+          marginTop: 14, fontSize: '0.82rem', fontStyle: 'italic',
+        }}>
+          {MENSAGEM_MOTIVACIONAL}
+        </div>
+
+        <div style={{ background: NAVY, color: '#fff', fontWeight: 800, fontSize: '0.85rem', padding: '8px 12px', marginTop: 14 }}>
+          PROGRAMAÇÃO DO DIA 12/09 (SÁBADO)
+        </div>
+        <div>
+          {PROGRAMACAO.map((item, idx) => (
+            <div key={idx} style={{
+              display: 'flex', gap: 10, padding: '6px 12px',
+              background: idx % 2 === 1 ? STRIPE : 'transparent', borderBottom: '1px solid #e2e8f0',
+            }}>
+              <div style={{ width: 80, flexShrink: 0, fontWeight: 800, fontSize: '0.75rem' }}>{item.hora}</div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '0.78rem' }}>{item.titulo}</div>
+                {item.sub && <div style={{ fontSize: '0.68rem', color: '#64748b' }}>{item.sub}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 14, fontSize: '0.65rem', fontStyle: 'italic', color: '#94a3b8' }}>
+          Documento gerado automaticamente pelo sistema MCU Night Run.
+        </div>
       </div>
     </div>
   );

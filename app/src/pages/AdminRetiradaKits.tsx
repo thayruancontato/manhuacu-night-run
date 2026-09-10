@@ -131,13 +131,12 @@ export default function AdminRetiradaKits() {
 
   const kitNomeDe = (r: Reg) => resolveKitNome(kits, r.kit, 'Kit Único');
 
-  // Nem todo kit inclui camiseta (ex: Kit Extra é só número/chip/medalha) - só mostra o
-  // tamanho no card quando o kit da pessoa realmente tem "CAMISETA" entre os itens. O tipo
-  // (Normal/Baby Look/Infantil) vem do cadastro do tamanho em si, não do texto do tamanho.
+  // Mostra o tamanho sempre que a inscrição tem um tamanho registrado, independente do
+  // kit - a pessoa pode ter escolhido tamanho antes de trocar de kit, ou o kit atual pode
+  // não listar "CAMISETA" mas ainda assim ter um tamanho salvo. O tipo (Normal/Baby
+  // Look/Infantil) vem do cadastro do tamanho em si, não do texto do tamanho.
   const camisetaInfoDe = (r: Reg): { tamanho: string; tipo: string } | null => {
-    const kitDoc = kits.find(k => k.id === r.kit);
-    const temCamiseta = kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA'));
-    if (!temCamiseta || !r.tamanhoCamiseta) return null;
+    if (!r.tamanhoCamiseta) return null;
     const item = camisetas.find(c => c.id === r.tamanhoCamiseta);
     const tamanho = getCamisetaShortLabel(r.tamanhoCamiseta, item);
     if (!tamanho) return null;

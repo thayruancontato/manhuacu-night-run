@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
 import { getCamisetaShortLabel } from '../utils/camisetaUtils';
 import { formatDateBR } from '../utils/dateUtils';
-import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink, Mail, Phone, MapPin, Flag, Package, HeartPulse, FileDown, Printer } from 'lucide-react';
+import { Search, CheckCircle2, PackageCheck, Users, X, AlertTriangle, LogOut, User as UserIcon, History, ExternalLink, Mail, Phone, MapPin, Flag, Package, HeartPulse, FileDown, Printer, FileText } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 
@@ -65,7 +65,7 @@ export default function AdminRetiradaKits() {
   const [kits, setKits] = useState<KitRecord[]>([]);
   const [camisetas, setCamisetas] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [modo, setModo] = useState<'propria' | 'unica_terceiro' | 'multipla_terceiro' | 'separar' | 'historico'>('propria');
+  const [modo, setModo] = useState<'propria' | 'unica_terceiro' | 'multipla_terceiro' | 'separar' | 'historico' | 'relatorio'>('propria');
   const [terceiroNome, setTerceiroNome] = useState('');
   const [selecionadosMultipla, setSelecionadosMultipla] = useState<Record<string, Reg>>({});
   const [separarNome, setSepararNome] = useState('');
@@ -790,6 +790,17 @@ export default function AdminRetiradaKits() {
           >
             <History size={16} /> Histórico ({regs.filter(r => r.kitRetiradoEm).length})
           </button>
+          <button
+            onClick={() => setModo('relatorio')}
+            style={{
+              flex: '1 1 140px', padding: '14px 10px', borderRadius: 10, border: 'none', fontWeight: 900, fontSize: '0.82rem', cursor: 'pointer',
+              background: modo === 'relatorio' ? '#fff' : 'transparent', color: modo === 'relatorio' ? '#071A45' : '#64748b',
+              boxShadow: modo === 'relatorio' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            <FileText size={16} /> Faltam entregar ({regs.filter(r => !r.kitRetiradoEm).length})
+          </button>
         </div>
 
         {(modo === 'unica_terceiro' || modo === 'multipla_terceiro') && (
@@ -966,16 +977,18 @@ export default function AdminRetiradaKits() {
           </div>
         )}
 
-        <div style={{ position: 'relative', marginBottom: 16 }}>
-          <Search size={20} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder={modo === 'historico' ? 'Filtrar histórico por nome, CPF, telefone, nº ou quem retirou...' : 'Buscar por nome, CPF, telefone ou número de inscrição...'}
-            autoFocus
-            style={{ width: '100%', padding: '16px 16px 16px 48px', borderRadius: 14, border: '2px solid #071A45', fontSize: '1rem', boxSizing: 'border-box' }}
-          />
-        </div>
+        {modo !== 'relatorio' && (
+          <div style={{ position: 'relative', marginBottom: 16 }}>
+            <Search size={20} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={modo === 'historico' ? 'Filtrar histórico por nome, CPF, telefone, nº ou quem retirou...' : 'Buscar por nome, CPF, telefone ou número de inscrição...'}
+              autoFocus
+              style={{ width: '100%', padding: '16px 16px 16px 48px', borderRadius: 14, border: '2px solid #071A45', fontSize: '1rem', boxSizing: 'border-box' }}
+            />
+          </div>
+        )}
 
         {feedback && (
           <div style={{
@@ -987,7 +1000,14 @@ export default function AdminRetiradaKits() {
           </div>
         )}
 
-        {modo === 'historico' ? (
+        {modo === 'relatorio' ? (
+          <RelatorioPendentesBlock
+            regs={regs}
+            kits={kits}
+            kitNomeDe={kitNomeDe}
+            camisetaInfoDe={camisetaInfoDe}
+          />
+        ) : modo === 'historico' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
               {([
@@ -1357,6 +1377,224 @@ export default function AdminRetiradaKits() {
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// Relatorio de quem ainda nao retirou o kit - lista compacta na tela (mesmas colunas da
+// tabela) e PDF no mesmo padrao visual navy/stripe/header.png dos outros relatorios do
+// evento (ex: handleExportKitPdf em AdminKits.tsx), so que aqui filtrado por pendencia em
+// vez de por kit. Camiseta so aparece pra quem esta num kit que inclui camiseta (Kit
+// Master) - os demais kits nao tem esse item, entao a coluna fica em branco pra eles.
+function RelatorioPendentesBlock({ regs, kits, kitNomeDe, camisetaInfoDe }: {
+  regs: Reg[];
+  kits: KitRecord[];
+  kitNomeDe: (r: Reg) => string;
+  camisetaInfoDe: (r: Reg) => { tamanho: string; tipo: string } | null;
+}) {
+  const [gerando, setGerando] = useState(false);
+
+  const pendentes = useMemo(() => regs
+    .filter(r => !r.kitRetiradoEm)
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
+    [regs]
+  );
+
+  const temCamisetaDe = (r: Reg) => {
+    const kitDoc = kits.find(k => k.id === r.kit);
+    return Boolean(kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA')));
+  };
+
+  const tamanhoDe = (r: Reg) => {
+    if (!temCamisetaDe(r)) return '';
+    return camisetaInfoDe(r)?.tamanho || '';
+  };
+
+  const gerarPdf = async () => {
+    setGerando(true);
+    try {
+      const headerBase64: string = await new Promise((resolve, reject) => {
+        fetch(`/header.png?v=${Date.now()}`, { cache: 'no-store' })
+          .then(res => res.blob())
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Falha ao carregar header.png'));
+            reader.readAsDataURL(blob);
+          })
+          .catch(reject);
+      });
+
+      const titleFont = new FontFace('Anton', 'url(/fonts/Anton-Regular.ttf)');
+      await titleFont.load();
+      (document as any).fonts.add(titleFont);
+      const titleText = 'FALTAM ENTREGAR';
+      const titleCanvas = document.createElement('canvas');
+      const titleCtx = titleCanvas.getContext('2d')!;
+      titleCtx.font = '90px Anton';
+      const titleSkew = 0.22;
+      const titlePadding = 24;
+      const titleTextW = titleCtx.measureText(titleText).width;
+      titleCanvas.width = titleTextW + titleSkew * 100 + titlePadding * 2;
+      titleCanvas.height = 130;
+      titleCtx.font = '90px Anton';
+      titleCtx.setTransform(1, 0, -titleSkew, 1, titlePadding, 92);
+      titleCtx.fillStyle = 'rgb(7, 26, 69)';
+      titleCtx.textBaseline = 'alphabetic';
+      titleCtx.fillText(titleText, 0, 0);
+      const titleImgData = titleCanvas.toDataURL('image/png');
+      const titleImgAspect = titleCanvas.width / titleCanvas.height;
+      const titleImgH = 11;
+      const titleImgW = titleImgH * titleImgAspect;
+
+      const docPdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageW = docPdf.internal.pageSize.getWidth();
+      const pageH = docPdf.internal.pageSize.getHeight();
+      const marginX = 14;
+      const marginBottom = 14;
+      const headerAspect = 2172 / 724;
+      const headerW = pageW;
+      const headerH = headerW / headerAspect;
+      const NAVY: [number, number, number] = [7, 26, 69];
+      const STRIPE: [number, number, number] = [241, 245, 249];
+
+      const drawHeader = () => {
+        try {
+          docPdf.addImage(headerBase64, 'PNG', 0, 0, headerW, headerH, 'relatorio-pendentes-pdf-header', 'FAST');
+        } catch {
+          docPdf.setFillColor(...NAVY);
+          docPdf.rect(0, 0, pageW, headerH, 'F');
+        }
+      };
+
+      const usableW = pageW - marginX * 2;
+      const colNomeW = usableW * 0.34;
+      const colCpfW = usableW * 0.18;
+      const colModalidadeW = usableW * 0.24;
+      const colKitW = usableW * 0.16;
+      const colTamanhoW = usableW * 0.08;
+      const colCpfX = marginX + colNomeW;
+      const colModalidadeX = colCpfX + colCpfW;
+      const colKitX = colModalidadeX + colModalidadeW;
+      const colTamanhoX = colKitX + colKitW;
+      const rowH = 6.4;
+
+      let y = 0;
+
+      const drawTableHeader = () => {
+        docPdf.setFillColor(...NAVY);
+        docPdf.rect(marginX, y, usableW, 7.5, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(7.5);
+        docPdf.setTextColor(255, 255, 255);
+        docPdf.text('NOME', marginX + 2.5, y + 5.2);
+        docPdf.text('CPF', colCpfX + 2.5, y + 5.2);
+        docPdf.text('MODALIDADE', colModalidadeX + 2.5, y + 5.2);
+        docPdf.text('KIT', colKitX + 2.5, y + 5.2);
+        docPdf.text('TAM.', colTamanhoX + 2.5, y + 5.2);
+        y += 7.5;
+      };
+
+      const newPage = () => {
+        docPdf.addPage();
+        drawHeader();
+        y = headerH + 8;
+        drawTableHeader();
+      };
+
+      drawHeader();
+      y = headerH + 8;
+      docPdf.addImage(titleImgData, 'PNG', marginX, y - titleImgH + 3, titleImgW, titleImgH, undefined, 'FAST');
+      y += 5;
+      docPdf.setFont('helvetica', 'italic');
+      docPdf.setFontSize(8.5);
+      docPdf.setTextColor(100, 116, 139);
+      docPdf.text(`${pendentes.length} kit(s) ainda não retirado(s).`, marginX, y);
+      y += 5;
+      drawTableHeader();
+
+      if (pendentes.length === 0) {
+        docPdf.setFont('helvetica', 'italic');
+        docPdf.setFontSize(9);
+        docPdf.setTextColor(100, 116, 139);
+        docPdf.text('Todos os kits já foram retirados.', marginX, y + 6);
+      }
+
+      pendentes.forEach((r, idx) => {
+        if (y + rowH > pageH - marginBottom) newPage();
+
+        if (idx % 2 === 1) {
+          docPdf.setFillColor(...STRIPE);
+          docPdf.rect(marginX, y, usableW, rowH, 'F');
+        }
+
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(7.4);
+        docPdf.setTextColor(...NAVY);
+        const nomeLine = docPdf.splitTextToSize(r.nome.toUpperCase(), colNomeW - 3)[0];
+        const modalidadeLine = docPdf.splitTextToSize(r.modalidadeNome || '-', colModalidadeW - 3)[0];
+        const kitLine = docPdf.splitTextToSize(kitNomeDe(r), colKitW - 3)[0];
+        docPdf.text(nomeLine, marginX + 2.5, y + rowH / 2 + 1.2);
+        docPdf.text(maskCpfDisplay(r.cpf), colCpfX + 2.5, y + rowH / 2 + 1.2);
+        docPdf.text(modalidadeLine, colModalidadeX + 2.5, y + rowH / 2 + 1.2);
+        docPdf.text(kitLine, colKitX + 2.5, y + rowH / 2 + 1.2);
+        docPdf.text(tamanhoDe(r) || '-', colTamanhoX + 2.5, y + rowH / 2 + 1.2);
+        y += rowH;
+      });
+
+      docPdf.save(`faltam-entregar-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (e) {
+      console.error('Erro ao gerar relatorio de pendentes:', e);
+    } finally {
+      setGerando(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#64748b' }}>{pendentes.length} kit(s) ainda não retirado(s)</span>
+        <button
+          onClick={gerarPdf}
+          disabled={gerando || pendentes.length === 0}
+          style={{
+            background: gerando ? '#94a3b8' : '#071A45', color: '#fff', border: 'none', borderRadius: 10,
+            padding: '10px 16px', fontWeight: 800, fontSize: '0.78rem', cursor: gerando ? 'wait' : 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <FileDown size={14} /> {gerando ? 'GERANDO...' : 'GERAR PDF'}
+        </button>
+      </div>
+
+      {pendentes.length === 0 ? (
+        <p style={{ textAlign: 'center', color: '#94a3b8', padding: '20px 0' }}>Todos os kits já foram retirados.</p>
+      ) : (
+        <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+            <thead>
+              <tr style={{ background: '#071A45', color: '#fff' }}>
+                <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>NOME</th>
+                <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>CPF</th>
+                <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>MODALIDADE</th>
+                <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>KIT</th>
+                <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>TAM.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendentes.map((r, idx) => (
+                <tr key={r.id} style={{ background: idx % 2 === 1 ? '#f1f5f9' : 'transparent' }}>
+                  <td style={{ padding: '6px 8px', fontWeight: 700, color: '#071A45', whiteSpace: 'nowrap' }}>{r.nome.toUpperCase()}</td>
+                  <td style={{ padding: '6px 8px', color: '#475569', whiteSpace: 'nowrap' }}>{maskCpfDisplay(r.cpf)}</td>
+                  <td style={{ padding: '6px 8px', color: '#475569', whiteSpace: 'nowrap' }}>{r.modalidadeNome || '-'}</td>
+                  <td style={{ padding: '6px 8px', color: '#475569', whiteSpace: 'nowrap' }}>{kitNomeDe(r)}</td>
+                  <td style={{ padding: '6px 8px', color: '#475569', whiteSpace: 'nowrap' }}>{tamanhoDe(r) || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

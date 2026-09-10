@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { useParams } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Camera, CheckCircle2, GraduationCap, Loader2, Plus, School, Trash2, X, XCircle } from 'lucide-react';
+import { Camera, CheckCircle2, GraduationCap, Loader2, MessageCircle, Plus, School, Trash2, X, XCircle } from 'lucide-react';
 
 type LinkEscolar = {
   codigo: string;
@@ -80,6 +80,22 @@ const calcularIdade = (dobStr: string) => {
 
 const gerarNumeroInscricao = () => String(Math.floor(10000000 + Math.random() * 90000000));
 
+const NUMERO_AVISO_INSCRICAO = '5533998200546';
+
+type AlunoConfirmado = {
+  nome: string;
+  numeroInscricao: string;
+  cpf: string;
+  dataNascimento: string;
+  sexo: string;
+  telefone: string;
+  responsavelNome: string;
+  responsavelCpf: string;
+  cidade: string;
+  uf: string;
+  modalidadeNome: string;
+};
+
 const inputStyle: CSSProperties = {
   width: '100%', padding: '11px 12px', borderRadius: 10, border: '1.5px solid #cbd5e1',
   fontSize: '0.88rem', boxSizing: 'border-box',
@@ -95,7 +111,7 @@ export default function PublicInscricaoEscolar() {
   const [aceite, setAceite] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState('');
-  const [resultado, setResultado] = useState<{ nome: string; numeroInscricao: string }[]>([]);
+  const [resultado, setResultado] = useState<AlunoConfirmado[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -250,7 +266,19 @@ export default function PublicInscricaoEscolar() {
         transaction.update(linkRef, { usados: novoUsados });
       });
 
-      setResultado(preparados.map(p => ({ nome: p.nome, numeroInscricao: p.numeroInscricao })));
+      setResultado(preparados.map(p => ({
+        nome: p.nome,
+        numeroInscricao: p.numeroInscricao,
+        cpf: p.data.cpf,
+        dataNascimento: p.data.dataNascimento,
+        sexo: p.data.sexo === 'F' ? 'Feminino' : 'Masculino',
+        telefone: p.data.telefone,
+        responsavelNome: p.data.responsavelNome,
+        responsavelCpf: p.data.responsavelCpf,
+        cidade: p.data.endereco.cidade,
+        uf: p.data.endereco.uf,
+        modalidadeNome: p.data.modalidadeNome,
+      })));
       setStatus('enviado');
     } catch (e: any) {
       console.error('Erro ao enviar inscrição escolar:', e);
@@ -258,6 +286,24 @@ export default function PublicInscricaoEscolar() {
     } finally {
       setEnviando(false);
     }
+  };
+
+  const avisarInscricaoConfirmada = () => {
+    const linhas = resultado.map((r, i) => (
+      `\n*Aluno ${i + 1}:*\n` +
+      `*Nome:* ${r.nome.toUpperCase()}\n` +
+      `*Nº de inscrição:* ${r.numeroInscricao}\n` +
+      `*CPF:* ${r.cpf}\n` +
+      `*Nascimento:* ${r.dataNascimento}\n` +
+      `*Sexo:* ${r.sexo}\n` +
+      `*Modalidade:* ${r.modalidadeNome}\n` +
+      `*Cidade:* ${r.cidade}-${r.uf}\n` +
+      `*Responsável:* ${r.responsavelNome}\n` +
+      `*CPF do responsável:* ${r.responsavelCpf}\n` +
+      `*WhatsApp do responsável:* ${r.telefone}`
+    )).join('\n');
+    const texto = `Inscrição cortesia escolar confirmada!\n\n*Escola:* ${link?.escola || '-'}\n${linhas}`;
+    window.open(`https://wa.me/${NUMERO_AVISO_INSCRICAO}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener,noreferrer');
   };
 
   if (status === 'carregando') {
@@ -301,6 +347,17 @@ export default function PublicInscricaoEscolar() {
             </div>
           ))}
         </div>
+        <button
+          type="button"
+          onClick={avisarInscricaoConfirmada}
+          style={{
+            marginTop: 20, background: '#25D366', color: '#fff', border: 'none', borderRadius: 14,
+            padding: '16px 28px', fontWeight: 900, fontSize: '0.9rem', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 4px 12px rgba(37,211,102,0.35)',
+          }}
+        >
+          <MessageCircle size={20} /> AVISAR INSCRIÇÃO CONFIRMADA
+        </button>
         <p style={{ color: '#64748b', maxWidth: 380, marginTop: 16 }}>Guarde os números de inscrição. Nos vemos no dia da corrida!</p>
       </div>
     );

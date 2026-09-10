@@ -2,7 +2,8 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { useParams } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Camera, CheckCircle2, GraduationCap, Loader2, MessageCircle, Plus, School, Trash2, X, XCircle } from 'lucide-react';
+import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
+import { Camera, CheckCircle2, Clock, GraduationCap, Loader2, MessageCircle, Plus, School, Trash2, X, XCircle } from 'lucide-react';
 
 type LinkEscolar = {
   codigo: string;
@@ -104,7 +105,7 @@ const labelStyle: CSSProperties = { fontSize: '0.7rem', fontWeight: 800, color: 
 
 export default function PublicInscricaoEscolar() {
   const { codigo } = useParams<{ codigo: string }>();
-  const [status, setStatus] = useState<'carregando' | 'invalido' | 'esgotado' | 'ok' | 'enviado'>('carregando');
+  const [status, setStatus] = useState<'carregando' | 'invalido' | 'esgotado' | 'ok' | 'enviado' | 'erro_temporario'>('carregando');
   const [link, setLink] = useState<LinkEscolar | null>(null);
   const [modalidades, setModalidades] = useState<Modalidade[]>([]);
   const [alunos, setAlunos] = useState<AlunoForm[]>([{ ...ALUNO_VAZIO }]);
@@ -130,7 +131,8 @@ export default function PublicInscricaoEscolar() {
         setStatus('ok');
       } catch (e) {
         console.error('Erro ao carregar link escolar:', e);
-        setStatus('invalido');
+        const temporario = /quota|resource-exhausted|429|firestore_error/i.test(String((e as any)?.message || (e as any)?.code || e || ''));
+        setStatus(temporario ? 'erro_temporario' : 'invalido');
       }
     })();
   }, [codigo]);
@@ -282,7 +284,9 @@ export default function PublicInscricaoEscolar() {
       setStatus('enviado');
     } catch (e: any) {
       console.error('Erro ao enviar inscrição escolar:', e);
-      setErro(e?.message || 'Erro ao enviar as inscrições. Tente novamente.');
+      const mensagensConhecidas = ['Link não encontrado.', 'Este link foi desativado.'];
+      const isConhecida = mensagensConhecidas.includes(e?.message) || String(e?.message || '').startsWith('Restam apenas');
+      setErro(isConhecida ? e.message : getFriendlyErrorMessage(e, 'Erro ao enviar as inscrições. Tente novamente.'));
     } finally {
       setEnviando(false);
     }
@@ -310,6 +314,23 @@ export default function PublicInscricaoEscolar() {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
         <Loader2 size={32} color="#071A45" />
+      </div>
+    );
+  }
+
+  if (status === 'erro_temporario') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', padding: 20, textAlign: 'center' }}>
+        <Clock size={48} color="#d97706" />
+        <h1 style={{ color: '#071A45', marginTop: 16, fontSize: '1.3rem' }}>Sistema ocupado</h1>
+        <p style={{ color: '#64748b', maxWidth: 380 }}>Por favor, tenha paciência e tente novamente em alguns minutos.</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          style={{ marginTop: 16, background: '#071A45', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 24px', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer' }}
+        >
+          TENTAR NOVAMENTE
+        </button>
       </div>
     );
   }

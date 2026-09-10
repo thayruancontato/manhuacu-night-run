@@ -55,6 +55,7 @@ import AdminFinanceiroRelatorios from './pages/AdminFinanceiroRelatorios';
 import AdminFinanceiroDefinicoes from './pages/AdminFinanceiroDefinicoes';
 import AdminVerificacoesManuais from './pages/AdminVerificacoesManuais';
 import AdminEnderecos from './pages/AdminEnderecos';
+import AdminImprimirFichas from './pages/AdminImprimirFichas';
 import AdminComprovanteExemplo from './pages/AdminComprovanteExemplo';
 import AdminPerfilExemploPreview from './pages/AdminPerfilExemploPreview';
 import './App.css';
@@ -118,6 +119,7 @@ function App() {
                 <Route path="card-euvou" element={<AdminCardEuVou />} />
                 <Route path="verificacoes-manuais" element={<AdminVerificacoesManuais />} />
                 <Route path="enderecos" element={<AdminEnderecos />} />
+                <Route path="imprimir-fichas" element={<AdminImprimirFichas />} />
                 <Route path="comprovante-exemplo" element={<AdminComprovanteExemplo />} />
                 <Route path="mensagens" element={<AdminMensagens />} />
                 <Route path="whatsapp" element={<AdminMensagensConfig />} />

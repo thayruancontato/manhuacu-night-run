@@ -59,6 +59,8 @@ export default function AdminRetiradaKits() {
   const [confirmarDuplicado, setConfirmarDuplicado] = useState<{ reg: Reg; nome: string; terceiro: boolean } | null>(null);
   const [detalhesReg, setDetalhesReg] = useState<Reg | null>(null);
   const [desfazerAlvo, setDesfazerAlvo] = useState<Reg | null>(null);
+  const [mostrarSeletorKit, setMostrarSeletorKit] = useState(false);
+  const [trocandoKit, setTrocandoKit] = useState(false);
   const [desfazendo, setDesfazendo] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'propria' | 'terceiro'>('todos');
   const [filtroKitId, setFiltroKitId] = useState('');
@@ -166,7 +168,7 @@ export default function AdminRetiradaKits() {
   const VerDetalhesLink = ({ r }: { r: Reg }) => (
     <button
       type="button"
-      onClick={() => setDetalhesReg(r)}
+      onClick={() => { setDetalhesReg(r); setMostrarSeletorKit(false); }}
       title="Ver detalhes do atleta"
       style={{
         background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 10,
@@ -555,6 +557,22 @@ export default function AdminRetiradaKits() {
     }
   };
 
+  // Upgrade de kit na hora da retirada (ex: pessoa quer levar um kit melhor do que o que
+  // escolheu na inscrição) - só troca o campo `kit`, sem mexer em pagamento/valor.
+  const trocarKit = async (reg: Reg, novoKitId: string) => {
+    setTrocandoKit(true);
+    try {
+      await updateDoc(doc(db, 'nightrun_registrations', reg.id), { kit: novoKitId });
+      setFeedback({ text: `Kit de ${reg.nome.toUpperCase()} alterado para ${resolveKitNome(kits, novoKitId, 'Kit Único').toUpperCase()}.`, type: 'success' });
+      setMostrarSeletorKit(false);
+    } catch (e) {
+      console.error(e);
+      setFeedback({ text: 'Erro ao trocar o kit. Tente novamente.', type: 'error' });
+    } finally {
+      setTrocandoKit(false);
+    }
+  };
+
   const handleLogout = () => {
     signOut(auth).catch(() => {});
     localStorage.removeItem('nightrun_admin_auth');
@@ -642,7 +660,7 @@ export default function AdminRetiradaKits() {
                           <div style={{ minWidth: 0 }}>
                             <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                             <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                              {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                              {r.modalidadeNome ? `${r.modalidadeNome} · ` : ''}{kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
                               {camisetaInfoDe(r) ? ` · ${camisetaInfoDe(r)!.tamanho} (${camisetaInfoDe(r)!.tipo})` : ''}
                             </div>
                           </div>
@@ -700,7 +718,7 @@ export default function AdminRetiradaKits() {
                       <div style={{ minWidth: 0 }}>
                         <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                         <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                          {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                          {r.modalidadeNome ? `${r.modalidadeNome} · ` : ''}{kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
                           {camisetaInfoDe(r) ? ` · ${camisetaInfoDe(r)!.tamanho} (${camisetaInfoDe(r)!.tipo})` : ''}
                         </div>
                       </div>
@@ -850,7 +868,7 @@ export default function AdminRetiradaKits() {
                   <div style={{ flex: 1, minWidth: 160 }}>
                     <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                     <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
-                      {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                      {r.modalidadeNome ? `${r.modalidadeNome} · ` : ''}{kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
                       {r.endereco?.cidade ? ` · ${r.endereco.cidade}${r.endereco.uf ? `/${r.endereco.uf}` : ''}` : ''}
                     </div>
                     <div><CamisetaBadge r={r} /></div>
@@ -905,7 +923,7 @@ export default function AdminRetiradaKits() {
                 <div style={{ flex: 1, minWidth: 160 }}>
                   <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
                   <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
-                    {kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
+                    {r.modalidadeNome ? `${r.modalidadeNome} · ` : ''}{kitNomeDe(r)}{r.numeroInscricao ? ` · Nº ${r.numeroInscricao}` : ''}
                     {r.endereco?.cidade ? ` · ${r.endereco.cidade}${r.endereco.uf ? `/${r.endereco.uf}` : ''}` : ''}
                   </div>
                   <div><CamisetaBadge r={r} /></div>
@@ -1028,7 +1046,11 @@ export default function AdminRetiradaKits() {
         // `regs` vem do onSnapshot com o documento completo (Firestore não filtra campos na
         // leitura) - o tipo Reg só declara o subconjunto usado nos cards, mas os outros campos
         // (email, sexo, endereço completo, saúde, etc.) já estão em memória, sem custo extra.
-        const d = detalhesReg as any;
+        // Busca a versão mais recente do reg em `regs` (atualizado ao vivo pelo onSnapshot)
+        // em vez de usar o objeto congelado de quando o modal abriu - assim, depois de trocar
+        // o kit por exemplo, o modal já reflete a mudança na hora.
+        const liveReg = regs.find(r => r.id === detalhesReg.id) || detalhesReg;
+        const d = liveReg as any;
         const InfoRow = ({ icon: Icon, label, value }: { icon: any; label: string; value: any }) => {
           if (!value) return null;
           return (
@@ -1041,7 +1063,7 @@ export default function AdminRetiradaKits() {
             </div>
           );
         };
-        const camisetaInfo = camisetaInfoDe(detalhesReg);
+        const camisetaInfo = camisetaInfoDe(liveReg);
         const endereco = d.endereco?.rua
           ? `${d.endereco.rua}${d.endereco.numero ? `, ${d.endereco.numero}` : ''} - ${d.endereco.bairro || ''}, ${d.endereco.cidade || ''}/${d.endereco.uf || ''}`
           : (d.endereco?.cidade ? `${d.endereco.cidade}/${d.endereco.uf || ''}` : '');
@@ -1074,7 +1096,53 @@ export default function AdminRetiradaKits() {
                 <InfoRow icon={Mail} label="E-mail" value={d.email} />
                 <InfoRow icon={UserIcon} label="Data de nascimento" value={d.dataNascimento ? formatDateBR(d.dataNascimento) : ''} />
                 <InfoRow icon={Flag} label="Modalidade" value={d.modalidadeNome || (d.categoria === 'infantil' ? 'Infantil' : '')} />
-                <InfoRow icon={Package} label="Kit" value={`${kitNomeDe(detalhesReg)}${camisetaInfo ? ` · ${camisetaInfo.tamanho} (${camisetaInfo.tipo})` : ''}`} />
+                <InfoRow icon={Package} label="Kit" value={`${kitNomeDe(liveReg)}${camisetaInfo ? ` · ${camisetaInfo.tamanho} (${camisetaInfo.tipo})` : ''}`} />
+                <div style={{ padding: '4px 0 12px 25px' }}>
+                  {!mostrarSeletorKit ? (
+                    <button
+                      type="button"
+                      onClick={() => setMostrarSeletorKit(true)}
+                      style={{
+                        background: '#eff6ff', color: '#2563eb', border: 'none', borderRadius: 8,
+                        padding: '8px 14px', fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                      }}
+                    >
+                      <Package size={13} /> FAZER UPGRADE DE KIT
+                    </button>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 320 }}>
+                      <span style={{ fontSize: '0.68rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>
+                        Escolher novo kit
+                      </span>
+                      {kits.map(k => (
+                        <button
+                          key={k.id}
+                          type="button"
+                          onClick={() => trocarKit(liveReg, k.id)}
+                          disabled={trocandoKit || k.id === liveReg.kit}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left',
+                            background: k.id === liveReg.kit ? '#f0fdf4' : '#f8fafc',
+                            border: k.id === liveReg.kit ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+                            borderRadius: 8, padding: '8px 12px', cursor: k.id === liveReg.kit ? 'default' : 'pointer',
+                            fontSize: '0.8rem', fontWeight: 700, color: '#071A45',
+                          }}
+                        >
+                          {k.nome}
+                          {k.id === liveReg.kit && <CheckCircle2 size={14} color="#16a34a" />}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setMostrarSeletorKit(false)}
+                        style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', textAlign: 'left', marginTop: 2 }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <InfoRow icon={MapPin} label="Endereço" value={endereco} />
                 {d.responsavelNome && <InfoRow icon={UserIcon} label="Responsável" value={`${d.responsavelNome}${d.responsavelCpf ? ` · CPF ${d.responsavelCpf}` : ''}`} />}
                 {(d.saude?.tipoSanguineo || d.saude?.condicaoSaude || d.saude?.alergiaDesc) && (

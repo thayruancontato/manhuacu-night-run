@@ -1407,7 +1407,9 @@ function RelatorioPendentesBlock({ regs, kits, kitNomeDe, camisetaInfoDe }: {
 
   const tamanhoDe = (r: Reg) => {
     if (!temCamisetaDe(r)) return '';
-    return camisetaInfoDe(r)?.tamanho || '';
+    const info = camisetaInfoDe(r);
+    if (!info) return '';
+    return `${info.tamanho} (${info.tipo})`;
   };
 
   const gerarPdf = async () => {
@@ -1468,11 +1470,11 @@ function RelatorioPendentesBlock({ regs, kits, kitNomeDe, camisetaInfoDe }: {
       };
 
       const usableW = pageW - marginX * 2;
-      const colNomeW = usableW * 0.34;
-      const colCpfW = usableW * 0.18;
-      const colModalidadeW = usableW * 0.24;
-      const colKitW = usableW * 0.16;
-      const colTamanhoW = usableW * 0.08;
+      const colNomeW = usableW * 0.30;
+      const colCpfW = usableW * 0.16;
+      const colModalidadeW = usableW * 0.20;
+      const colKitW = usableW * 0.15;
+      const colTamanhoW = usableW * 0.19;
       const colCpfX = marginX + colNomeW;
       const colModalidadeX = colCpfX + colCpfW;
       const colKitX = colModalidadeX + colModalidadeW;
@@ -1534,11 +1536,12 @@ function RelatorioPendentesBlock({ regs, kits, kitNomeDe, camisetaInfoDe }: {
         const nomeLine = docPdf.splitTextToSize(r.nome.toUpperCase(), colNomeW - 3)[0];
         const modalidadeLine = docPdf.splitTextToSize(r.modalidadeNome || '-', colModalidadeW - 3)[0];
         const kitLine = docPdf.splitTextToSize(kitNomeDe(r), colKitW - 3)[0];
+        const tamanhoLine = docPdf.splitTextToSize(tamanhoDe(r) || '-', colTamanhoW - 3)[0];
         docPdf.text(nomeLine, marginX + 2.5, y + rowH / 2 + 1.2);
         docPdf.text(maskCpfDisplay(r.cpf), colCpfX + 2.5, y + rowH / 2 + 1.2);
         docPdf.text(modalidadeLine, colModalidadeX + 2.5, y + rowH / 2 + 1.2);
         docPdf.text(kitLine, colKitX + 2.5, y + rowH / 2 + 1.2);
-        docPdf.text(tamanhoDe(r) || '-', colTamanhoX + 2.5, y + rowH / 2 + 1.2);
+        docPdf.text(tamanhoLine, colTamanhoX + 2.5, y + rowH / 2 + 1.2);
         y += rowH;
       });
 

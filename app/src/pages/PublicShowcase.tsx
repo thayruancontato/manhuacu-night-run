@@ -9,7 +9,12 @@ import '../App.css';
 const MIN_CARDS_PER_COLUMN = 14;
 // Segundos de loop por card - controla a velocidade (mais cards por coluna = loop mais
 // longo, senão a rolagem ficaria cada vez mais rápida quanto mais gente se inscrever).
-const SECONDS_PER_CARD = 0.55;
+const SECONDS_PER_CARD = 0.28;
+// Piso de fotos ÚNICAS que cada coluna precisa ter antes de repetir - numa tela muito larga,
+// calcularColunas() sozinho criaria colunas demais e finas, cada uma com pouca gente
+// (repetindo rápido e dando a impressão de que "não passa todo mundo"). Isso limita o número
+// de colunas em telas grandes pra garantir bastante gente por coluna antes do loop reiniciar.
+const MIN_UNICOS_POR_COLUNA = 45;
 
 // Apoiadores exibidos na faixa lateral - logos brancos (pasta /BRANCOS), feitos pra ficar
 // direto sobre o fundo navy da faixa, sem base branca por trás (um card branco deixaria a
@@ -41,7 +46,13 @@ const embaralhar = <T,>(lista: T[]): T[] => {
 
 export default function PublicShowcase() {
   const [atletas, setAtletas] = useState<Atleta[]>([]);
-  const [numColunas, setNumColunas] = useState(() => calcularColunas());
+  const [colunasPorLargura, setColunasPorLargura] = useState(() => calcularColunas());
+  // Nunca deixa a tela ter colunas de menos gente demais - se a largura permitiria mais
+  // colunas do que o total de confirmados sustenta com boa profundidade, usa menos colunas
+  // (mais largas) em vez de mais colunas finas repetindo rápido.
+  const numColunas = atletas.length > 0
+    ? Math.max(1, Math.min(colunasPorLargura, Math.floor(atletas.length / MIN_UNICOS_POR_COLUNA) || 1))
+    : colunasPorLargura;
   // Assinatura do conjunto atual (ids ordenados) - usada pra NUNCA re-renderizar a parede
   // quando o roster busca de novo e volta com o mesmo conteúdo de antes. Trocar o array de
   // atletas por um nulo (mesmo que com os mesmos dados) reconstrói as colunas do zero e a
@@ -88,7 +99,7 @@ export default function PublicShowcase() {
       timeoutId = setTimeout(() => {
         if (Math.abs(window.innerWidth - larguraAnterior) < 80) return;
         larguraAnterior = window.innerWidth;
-        setNumColunas(calcularColunas());
+        setColunasPorLargura(calcularColunas());
       }, 800);
     };
     window.addEventListener('resize', onResize);

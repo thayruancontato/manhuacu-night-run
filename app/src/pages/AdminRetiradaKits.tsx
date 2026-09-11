@@ -1796,6 +1796,21 @@ function RelatorioPendentesBlock({ regs, kits, camisetas, kitNomeDe, camisetaInf
     [regs]
   );
 
+  const cidadesResumo = useMemo(() => {
+    const porCidade = new Map<string, number>();
+    let deManhuacu = 0;
+    let deFora = 0;
+    for (const r of pendentes) {
+      const cidade = (r.endereco?.cidade || '').trim();
+      const chave = cidade || 'Não informado';
+      porCidade.set(chave, (porCidade.get(chave) || 0) + 1);
+      if (normalize(cidade) === 'manhuacu') deManhuacu++;
+      else deFora++;
+    }
+    const porCidadeOrdenado = Array.from(porCidade.entries()).sort((a, b) => b[1] - a[1]);
+    return { deManhuacu, deFora, porCidade: porCidadeOrdenado };
+  }, [pendentes]);
+
   const temCamisetaDe = (r: Reg) => {
     const kitDoc = kits.find(k => k.id === r.kit);
     return Boolean(kitDoc?.itens?.some(item => item.toUpperCase().includes('CAMISETA')));
@@ -2093,6 +2108,29 @@ function RelatorioPendentesBlock({ regs, kits, camisetas, kitNomeDe, camisetaInf
         </div>
       </div>
 
+      {pendentes.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+          <span style={{ background: '#fce7f3', color: '#be185d', fontWeight: 800, fontSize: '0.72rem', padding: '6px 12px', borderRadius: 999 }}>
+            MANHUAÇU: {cidadesResumo.deManhuacu}
+          </span>
+          <span style={{ background: '#f1f5f9', color: '#475569', fontWeight: 800, fontSize: '0.72rem', padding: '6px 12px', borderRadius: 999 }}>
+            DE FORA: {cidadesResumo.deFora}
+          </span>
+          {cidadesResumo.porCidade.map(([cidade, qtd]) => (
+            <span
+              key={cidade}
+              style={{
+                background: normalize(cidade) === 'manhuacu' ? '#fce7f3' : '#eef2ff',
+                color: normalize(cidade) === 'manhuacu' ? '#be185d' : '#4338ca',
+                fontWeight: 700, fontSize: '0.7rem', padding: '6px 12px', borderRadius: 999,
+              }}
+            >
+              {cidade}: {qtd}
+            </span>
+          ))}
+        </div>
+      )}
+
       {pendentes.length === 0 ? (
         <p style={{ textAlign: 'center', color: '#94a3b8', padding: '20px 0' }}>Todos os kits já foram retirados.</p>
       ) : (
@@ -2102,6 +2140,7 @@ function RelatorioPendentesBlock({ regs, kits, camisetas, kitNomeDe, camisetaInf
               <tr style={{ background: '#071A45', color: '#fff' }}>
                 <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>NOME</th>
                 <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>CPF</th>
+                <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>CIDADE</th>
                 <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>MODALIDADE</th>
                 <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>KIT</th>
                 <th style={{ textAlign: 'left', padding: '7px 8px', fontWeight: 800 }}>TAM.</th>
@@ -2112,6 +2151,15 @@ function RelatorioPendentesBlock({ regs, kits, camisetas, kitNomeDe, camisetaInf
                 <tr key={r.id} style={{ background: idx % 2 === 1 ? '#f1f5f9' : 'transparent' }}>
                   <td style={{ padding: '6px 8px', fontWeight: 700, color: '#071A45', whiteSpace: 'nowrap' }}>{r.nome.toUpperCase()}</td>
                   <td style={{ padding: '6px 8px', color: '#475569', whiteSpace: 'nowrap' }}>{maskCpfDisplay(r.cpf)}</td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                    {normalize(r.endereco?.cidade || '') === 'manhuacu' ? (
+                      <span style={{ background: '#fce7f3', color: '#be185d', fontWeight: 800, padding: '2px 8px', borderRadius: 6 }}>
+                        {r.endereco?.cidade}
+                      </span>
+                    ) : (
+                      <span style={{ color: '#475569' }}>{r.endereco?.cidade || '-'}</span>
+                    )}
+                  </td>
                   <td style={{ padding: '6px 8px', color: '#475569', whiteSpace: 'nowrap' }}>{r.modalidadeNome || '-'}</td>
                   <td style={{ padding: '6px 8px', color: '#475569', whiteSpace: 'nowrap' }}>{kitNomeDe(r)}</td>
                   <td style={{ padding: '6px 8px', color: '#475569', whiteSpace: 'nowrap' }}>{tamanhoDe(r) || '-'}</td>

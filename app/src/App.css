@@ -5574,10 +5574,24 @@ input[type="radio"], input[type="checkbox"] { display:none; }
 }
 
 .showcase-wall {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   overflow: hidden;
+}
+
+/* Transição suave da parede de fotos pra faixa de logos, em vez de uma linha sólida
+   separando as duas áreas. */
+.showcase-wall::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: clamp(60px, 8vw, 140px);
+  background: linear-gradient(to right, transparent, #0f1535);
+  pointer-events: none;
 }
 
 .showcase-col {
@@ -5647,7 +5661,6 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   width: clamp(220px, 18vw, 320px);
   height: 100%;
   background: #0f1535;
-  border-left: 1px solid rgba(255,255,255,0.08);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -5685,14 +5698,14 @@ input[type="radio"], input[type="checkbox"] { display:none; }
 }
 
 .showcase-sponsor-card {
-  background: #fff;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
   border-radius: 10px;
   aspect-ratio: 4 / 3;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  padding: 10px;
 }
 
 .showcase-sponsor-card-solo {
@@ -5707,7 +5720,7 @@ input[type="radio"], input[type="checkbox"] { display:none; }
 }
 
 .showcase-sponsor-nome {
-  color: #071A45;
+  color: #fff;
   font-weight: 800;
   font-size: 0.62rem;
   text-align: center;

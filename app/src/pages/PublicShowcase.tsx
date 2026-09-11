@@ -11,17 +11,17 @@ const MIN_CARDS_PER_COLUMN = 14;
 // longo, senão a rolagem ficaria cada vez mais rápida quanto mais gente se inscrever).
 const SECONDS_PER_CARD = 0.55;
 
-// Apoiadores exibidos na faixa lateral, cada um numa base branca. Os arquivos de logo (além
-// da Ademare, já usada no resto do site) ainda precisam ser enviados - até lá aparece o nome
-// como texto no lugar da imagem.
+// Apoiadores exibidos na faixa lateral - logos brancos (pasta /BRANCOS), feitos pra ficar
+// direto sobre o fundo navy da faixa, sem base branca por trás (um card branco deixaria a
+// logo branca invisível).
 const APOIADORES = [
-  { nome: 'Sicoob Credilivre', logo: '' },
-  { nome: 'Cafe Emerick', logo: '' },
-  { nome: 'PlayKids', logo: '' },
-  { nome: 'Calpen', logo: '' },
-  { nome: 'Mutumilk', logo: '' },
-  { nome: 'Escola do Futuro', logo: '' },
-  { nome: 'Tinauto', logo: '' },
+  { nome: 'Sicoob Credilivre', logo: '/BRANCOS/SICOOB.png' },
+  { nome: 'Cafe Emerick', logo: '/BRANCOS/CAFÉ EMERICK.png' },
+  { nome: 'PlayKids', logo: '/BRANCOS/PLAYKIDS.png' },
+  { nome: 'Calpen', logo: '/BRANCOS/CALPEN.png' },
+  { nome: 'Mutumilk', logo: '/BRANCOS/MUTUMILK.png' },
+  { nome: 'Escola do Futuro', logo: '/BRANCOS/ESCOLA DO FUTURO.png' },
+  { nome: 'Tinauto', logo: '/BRANCOS/TINAUTO.png' },
 ];
 
 type Atleta = { id: string; fotoUrl: string; nome: string };
@@ -123,7 +123,7 @@ export default function PublicShowcase() {
         <div className="showcase-sidebar-section">
           <span className="showcase-sidebar-label">Realização</span>
           <div className="showcase-sponsor-card showcase-sponsor-card-solo">
-            <img src="/logo-ademare.png" alt="Ademare" />
+            <img src="/BRANCOS/ADEMARE.png" alt="Ademare" />
           </div>
         </div>
 

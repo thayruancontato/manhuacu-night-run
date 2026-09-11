@@ -5559,6 +5559,79 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   padding: 26px 18px 14px !important;
 }
 
+/* ===== /showcase - parede de fotos em loop pra telão do evento ===== */
+/* Reaproveita as keyframes soldOutScrollUp/soldOutScrollDown (translateY 0 <-> -50%,
+   fecha o loop porque cada coluna renderiza seu conteúdo 2x) definidas acima. Layout em
+   flex sem gap entre colunas pra cobrir 100% da largura da tela sem sobrar borda. */
+.showcase-root {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #0f1535;
+  display: flex;
+}
+
+.showcase-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+}
+
+.showcase-col-up { animation-name: soldOutScrollUp; animation-timing-function: linear; animation-iteration-count: infinite; }
+.showcase-col-down { animation-name: soldOutScrollDown; animation-timing-function: linear; animation-iteration-count: infinite; }
+
+.showcase-card {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.showcase-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.showcase-card-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #6BFF2A, #16a34a);
+  border: 2px solid rgba(255,255,255,0.25);
+}
+
+.showcase-card-fallback-letra {
+  color: #071A45;
+  font-weight: 900;
+  font-size: 2.2rem;
+  line-height: 1;
+}
+
+.showcase-card-fallback-nome {
+  color: #071A45;
+  font-weight: 800;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  text-align: center;
+  padding: 0 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sold-out-check {
   color: var(--accent);
   filter: drop-shadow(0 0 10px rgba(107,255,42,0.5));

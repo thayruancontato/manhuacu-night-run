@@ -9,6 +9,7 @@ import AtletasConfirmados from './pages/AtletasConfirmados';
 import EnderecoAtleta from './pages/EnderecoAtleta';
 import PublicSepararKits from './pages/PublicSepararKits';
 import PublicInscricaoEscolar from './pages/PublicInscricaoEscolar';
+import PublicShowcase from './pages/PublicShowcase';
 import AdminLinksEscolares from './pages/AdminLinksEscolares';
 import AdminBateu1000Preview from './pages/AdminBateu1000Preview';
 import AdminRetiradaKits from './pages/AdminRetiradaKits';
@@ -83,6 +84,7 @@ function App() {
               <Route path="/endereco" element={<EnderecoAtleta />} />
               <Route path="/retirar-para-outros" element={<PublicSepararKits />} />
               <Route path="/inscricao-escolar/:codigo" element={<PublicInscricaoEscolar />} />
+              <Route path="/showcase" element={<PublicShowcase />} />
               <Route path="/regulamento" element={<Regulamento />} />
               <Route path="/inscricao" element={<ClosedRegistrations />} />
               {/* Link secreto: mesma pagina de inscricao (PublicForm), direto, sem passar pela

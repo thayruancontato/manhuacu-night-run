@@ -5612,6 +5612,16 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   aspect-ratio: 3 / 4;
   overflow: hidden;
   flex-shrink: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: 200px 266px;
+  opacity: 1;
+  transition: opacity 0.32s ease;
+}
+
+/* Troca individual de foto (rotação de slot) - fade-out rápido, PhotoTile troca a imagem no
+   meio da transição e o React reseta a opacidade de volta pra 1, fazendo o fade-in. */
+.showcase-card-fading {
+  opacity: 0;
 }
 
 .showcase-card img {

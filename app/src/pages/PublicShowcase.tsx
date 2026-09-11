@@ -1,20 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import '../App.css';
 
-// Parede de fotos em loop infinito pra telão do evento - mesmo efeito visual da tela
-// "Inscrições esgotadas" (SoldOutScreen.tsx: colunas alternando pra cima/baixo, foto
-// duplicada pra fechar o loop sem emenda visível) - cobrindo TODOS os confirmados, não só
-// uma amostra de 60. Faixa lateral fixa à direita com as logos (não fica nada por cima da
-// parede de fotos).
-const MIN_CARDS_PER_COLUMN = 14;
-// Segundos de loop por card - controla a velocidade (mais cards por coluna = loop mais
-// longo, senão a rolagem ficaria cada vez mais rápida quanto mais gente se inscrever).
+// Parede de fotos pra telão do evento - colunas rolando pra cima/baixo em loop contínuo
+// (mesmo efeito da tela "Inscrições esgotadas": conteúdo duplicado 2x fecha o loop sem
+// emenda visível). Cada coluna tem um número FIXO de posições ("slots"); de tempos em
+// tempos, uma posição aleatória troca de foto sozinha com fade-out/fade-in - nunca a
+// coluna inteira de uma vez - e ao longo do tempo isso passa por TODOS os confirmados,
+// não só uma amostra.
+const SLOTS_POR_COLUNA = 16;
 const SECONDS_PER_CARD = 0.28;
-// Piso de fotos ÚNICAS que cada coluna precisa ter antes de repetir - numa tela muito larga,
-// calcularColunas() sozinho criaria colunas demais e finas, cada uma com pouca gente
-// (repetindo rápido e dando a impressão de que "não passa todo mundo"). Isso limita o número
-// de colunas em telas grandes pra garantir bastante gente por coluna antes do loop reiniciar.
-const MIN_UNICOS_POR_COLUNA = 45;
+const ROTACAO_INTERVALO_MS = 1400;
+const FADE_MS = 650;
 
 // Apoiadores exibidos na faixa lateral - logos brancos (pasta /BRANCOS), feitos pra ficar
 // direto sobre o fundo navy da faixa, sem base branca por trás (um card branco deixaria a
@@ -31,10 +27,9 @@ const APOIADORES = [
 
 type Atleta = { id: string; fotoUrl: string; nome: string };
 
-// Fisher-Yates - o roster chega sempre ordenado por nome (feito assim de propósito no
-// worker, pra ficar estável entre chamadas), então sem embaralhar aqui a parede mostrava
-// sempre a mesma composição/posição a cada abertura da página. Embaralha uma vez por
-// atualização real da lista (não a cada re-render).
+// Fisher-Yates - o roster chega sempre ordenado por nome (estável de propósito no worker),
+// então sem embaralhar aqui a escolha de quem entra em cada slot seguiria sempre a mesma
+// ordem alfabética.
 const embaralhar = <T,>(lista: T[]): T[] => {
   const copia = [...lista];
   for (let i = copia.length - 1; i > 0; i--) {
@@ -44,30 +39,48 @@ const embaralhar = <T,>(lista: T[]): T[] => {
   return copia;
 };
 
+// Um "slot" é uma posição fixa na parede (coluna + índice). Guarda o próprio atleta em vez
+// de derivar de um índice corrido, porque a rotação troca posições aleatórias avulsas, não
+// em sequência.
+type Slot = { atleta: Atleta; versao: number };
+
+function PhotoTile({ atleta }: { atleta: Atleta }) {
+  const [exibido, setExibido] = useState(atleta);
+  const [desvanecendo, setDesvanecendo] = useState(false);
+
+  useEffect(() => {
+    if (atleta.id === exibido.id) return;
+    setDesvanecendo(true);
+    const t1 = setTimeout(() => {
+      setExibido(atleta);
+      setDesvanecendo(false);
+    }, FADE_MS / 2);
+    return () => clearTimeout(t1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atleta.id]);
+
+  return (
+    <div className={`showcase-card ${desvanecendo ? 'showcase-card-fading' : ''}`}>
+      {exibido.fotoUrl ? (
+        <img src={exibido.fotoUrl} alt="" decoding="async" />
+      ) : (
+        <div className="showcase-card-fallback">
+          <span className="showcase-card-fallback-letra">{(exibido.nome || '?').trim().charAt(0).toUpperCase()}</span>
+          <span className="showcase-card-fallback-nome">{(exibido.nome || '').trim().split(/\s+/)[0]}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PublicShowcase() {
   const [atletas, setAtletas] = useState<Atleta[]>([]);
   const [colunasPorLargura, setColunasPorLargura] = useState(() => calcularColunas());
-  // Captura o total de confirmados só na PRIMEIRA carga, pra calcular o número de colunas
-  // uma única vez - se recalculasse toda vez que mais gente confirma (atletas.length
-  // crescendo ao longo do dia), de vez em quando o número de colunas mudaria de patamar e
-  // redistribuiria TODO mundo de novo (o corte brusco que a rolagem "some fora da tela, nova
-  // adicionada" deveria evitar). Mais gente confirmando depois só deixa as colunas mais
-  // fundas, nunca precisa de menos.
-  const totalInicialRef = useRef(0);
-  // Nunca deixa a tela ter colunas de menos gente demais - se a largura permitiria mais
-  // colunas do que o total de confirmados sustenta com boa profundidade, usa menos colunas
-  // (mais largas) em vez de mais colunas finas repetindo rápido.
-  const numColunas = totalInicialRef.current > 0
-    ? Math.max(1, Math.min(colunasPorLargura, Math.floor(totalInicialRef.current / MIN_UNICOS_POR_COLUNA) || 1))
-    : colunasPorLargura;
+  const [slots, setSlots] = useState<Slot[][]>([]);
+  const atletasRef = useRef<Atleta[]>([]);
 
   useEffect(() => {
     const workerUrl = import.meta.env.VITE_WORKER_URL;
-    // Nunca troca a lista inteira (nem re-embaralha) numa atualização - isso descartaria o
-    // arranjo em tela e todo mundo saltaria de posição de uma vez. Quem já está na lista
-    // mantém exatamente a mesma posição; só quem confirmou de novo entra, embaralhado, no
-    // final de cada coluna (novo conteúdo entra por baixo/por cima da tela, sem cortar a
-    // rolagem de quem já estava passando).
     const carregarRoster = async () => {
       try {
         const res = await fetch(`${workerUrl}/roster/confirmed`);
@@ -81,37 +94,24 @@ export default function PublicShowcase() {
             nome: a.nome || '',
             fotoUrl: a.fotoUrl || '',
           }));
-        setAtletas(atual => {
-          if (atual.length === 0) {
-            totalInicialRef.current = lista.length;
-            return embaralhar(lista);
-          }
-          const idsNovaLista = new Set(lista.map(a => a.id));
-          const mantidos = atual.filter(a => idsNovaLista.has(a.id));
-          const idsMantidos = new Set(mantidos.map(a => a.id));
-          const novos = lista.filter(a => !idsMantidos.has(a.id));
-          if (novos.length === 0 && mantidos.length === atual.length) return atual;
-          return [...mantidos, ...embaralhar(novos)];
-        });
+        atletasRef.current = lista;
+        setAtletas(lista);
       } catch (e) {
         console.error('Erro ao buscar confirmados para o showcase:', e);
       }
     };
 
     carregarRoster();
-    // Recarrega periodicamente - o telão fica ligado o evento inteiro, então precisa pegar
-    // gente que confirmou depois que a página abriu. Agora que a atualização só ACRESCENTA
-    // gente nova sem mexer em quem já está na tela, pode ser mais frequente sem risco de
-    // corte brusco. O endpoint já é cacheado (KV, não Firestore), então isso não pesa no
-    // banco mesmo rodando o dia inteiro.
+    // Recarrega periodicamente só pra atualizar o "pool" de quem pode aparecer (gente que
+    // confirmou depois que a página abriu) - não mexe no que já está em tela, isso é feito
+    // pela rotação de slots abaixo.
     const interval = setInterval(carregarRoster, 3 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     // Debounce + só recalcula se a largura realmente mudou de forma relevante - alguns
-    // players/TVs disparam eventos de resize espúrios (troca de overscan, etc.) que, sem
-    // essa proteção, redistribuíam as colunas à toa e reiniciavam a animação inteira.
+    // players/TVs disparam eventos de resize espúrios (troca de overscan, etc.).
     let larguraAnterior = window.innerWidth;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const onResize = () => {
@@ -129,20 +129,53 @@ export default function PublicShowcase() {
     };
   }, []);
 
-  const colunas = Array.from({ length: numColunas }, (_, colIndex) => {
-    const base = atletas.filter((_, i) => i % numColunas === colIndex);
-    if (base.length === 0) return [] as Atleta[];
-    const preenchida: Atleta[] = [];
-    while (preenchida.length < MIN_CARDS_PER_COLUMN) preenchida.push(...base);
-    return preenchida;
-  }).filter(col => col.length > 0);
+  // Monta os slots (posições fixas) só quando o número de colunas muda ou na primeira carga
+  // de atletas - a partir daí, cada slot muda de conteúdo individualmente pela rotação, nunca
+  // reconstruindo a coluna inteira (o que reiniciaria a rolagem de todo mundo de uma vez).
+  useEffect(() => {
+    if (atletas.length === 0) return;
+    setSlots(prev => {
+      if (prev.length === colunasPorLargura) return prev;
+      const pool = embaralhar(atletas);
+      let ponteiro = 0;
+      const proximo = () => {
+        const atleta = pool[ponteiro % pool.length];
+        ponteiro += 1;
+        return atleta;
+      };
+      return Array.from({ length: colunasPorLargura }, () =>
+        Array.from({ length: SLOTS_POR_COLUNA }, () => ({ atleta: proximo(), versao: 0 }))
+      );
+    });
+  }, [atletas, colunasPorLargura]);
 
-  if (colunas.length === 0) return <div className="showcase-root" />;
+  // Rotação: a cada intervalo, troca UMA posição aleatória (nunca a coluna toda) por outro
+  // atleta aleatório do pool completo - com isso, ao longo do tempo, todo mundo passa pela
+  // parede, e a troca em si é sempre individual, com fade (PhotoTile cuida da transição).
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSlots(prev => {
+        if (prev.length === 0) return prev;
+        const pool = atletasRef.current;
+        if (pool.length === 0) return prev;
+        const colIndex = Math.floor(Math.random() * prev.length);
+        const slotIndex = Math.floor(Math.random() * prev[colIndex].length);
+        const novoAtleta = pool[Math.floor(Math.random() * pool.length)];
+        if (novoAtleta.id === prev[colIndex][slotIndex].atleta.id) return prev;
+        const proximo = prev.map(col => col.slice());
+        proximo[colIndex][slotIndex] = { atleta: novoAtleta, versao: prev[colIndex][slotIndex].versao + 1 };
+        return proximo;
+      });
+    }, ROTACAO_INTERVALO_MS);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (slots.length === 0) return <div className="showcase-root" />;
 
   return (
     <div className="showcase-root">
       <div className="showcase-wall">
-        {colunas.map((col, colIndex) => {
+        {slots.map((col, colIndex) => {
           const duracao = Math.max(5, col.length * SECONDS_PER_CARD);
           return (
             <div
@@ -150,17 +183,8 @@ export default function PublicShowcase() {
               className={`showcase-col ${colIndex % 2 === 0 ? 'showcase-col-up' : 'showcase-col-down'}`}
               style={{ animationDuration: `${duracao}s`, animationDelay: `${-(colIndex * 3.5)}s` }}
             >
-              {[...col, ...col].map((atleta, i) => (
-                <div className="showcase-card" key={`${colIndex}-${i}-${atleta.id}`}>
-                  {atleta.fotoUrl ? (
-                    <img src={atleta.fotoUrl} alt="" decoding="async" />
-                  ) : (
-                    <div className="showcase-card-fallback">
-                      <span className="showcase-card-fallback-letra">{(atleta.nome || '?').trim().charAt(0).toUpperCase()}</span>
-                      <span className="showcase-card-fallback-nome">{(atleta.nome || '').trim().split(/\s+/)[0]}</span>
-                    </div>
-                  )}
-                </div>
+              {Array.from({ length: col.length * 2 }, (_, i) => (
+                <PhotoTile key={`${colIndex}-${i}`} atleta={col[i % col.length].atleta} />
               ))}
             </div>
           );

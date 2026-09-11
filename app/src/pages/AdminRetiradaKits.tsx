@@ -1137,6 +1137,22 @@ export default function AdminRetiradaKits() {
           </button>
         </div>
 
+        {regs.length > 0 && (() => {
+          const retirados = regs.filter(r => r.kitRetiradoEm).length;
+          const percentual = (retirados / regs.length) * 100;
+          return (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b' }}>KITS ENTREGUES</span>
+                <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#071A45' }}>{percentual.toFixed(1)}%</span>
+              </div>
+              <div style={{ height: 8, borderRadius: 999, background: '#e2e8f0', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${percentual}%`, borderRadius: 999, background: '#6BFF2A' }} />
+              </div>
+            </div>
+          );
+        })()}
+
         {(modo === 'unica_terceiro' || modo === 'multipla_terceiro') && (
           <div style={{ background: '#fff', borderRadius: 16, padding: 18, marginBottom: 16, border: '2px solid #071A45' }}>
             <label style={{ fontSize: '0.75rem', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>

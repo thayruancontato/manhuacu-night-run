@@ -43,11 +43,14 @@ export default function Aquecimento() {
           <p className="aq-linha2">
             <Letras text="AQUECIMENTO" />
           </p>
-          <p className="aq-nome1"><Letras text="GLAUBER" /></p>
-          <p className="aq-nome2">
-            <Letras text="VALENTIM" />
-            <span className="aq-risco aq-risco3" />
-          </p>
+          <div className="aquecimento-nome-shake">
+            <p className="aq-nome1"><Letras text="GLAUBER" /></p>
+            <p className="aq-nome2">
+              <Letras text="VALENTIM" />
+              <span className="aq-risco aq-risco3" />
+              <span className="aquecimento-vem">Vem se preparar com a gente!</span>
+            </p>
+          </div>
         </div>
 
         <svg className="aquecimento-fita" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -220,7 +223,37 @@ export default function Aquecimento() {
           transform: skewX(-6deg);
         }
 
-        .aq-risco3 { bottom: -0.24em; width: 82%; }
+        .aq-risco3 {
+          bottom: -0.24em;
+          width: 82%;
+          animation: aquecimentoRiscoPunch 20s ease-in-out infinite;
+          animation-delay: 15s;
+        }
+
+        .aquecimento-nome-shake {
+          animation: aquecimentoNomeShake 20s ease-in-out infinite;
+          animation-delay: 15s;
+        }
+
+        .aquecimento-vem {
+          position: absolute;
+          left: 1%;
+          top: 100%;
+          margin-top: 1.6em;
+          width: 98%;
+          font-family: 'Aquecimento Anton', 'Arial Narrow', sans-serif;
+          text-transform: none;
+          color: #fff;
+          font-size: clamp(1rem, 3.1vw, 2.3rem);
+          letter-spacing: 0.01em;
+          text-shadow: 0 2px 0 rgba(0,0,0,0.4);
+          opacity: 0;
+          transform: translateY(-220%) scaleY(0.4);
+          transform-origin: 50% 0%;
+          white-space: nowrap;
+          animation: aquecimentoVemCai 20s ease-in-out infinite;
+          animation-delay: 15s;
+        }
 
         .aquecimento-logos {
           position: absolute;
@@ -281,6 +314,38 @@ export default function Aquecimento() {
           32%    { stroke-dashoffset: 0; }
           36.7%  { stroke-dashoffset: -1; }
           100%   { stroke-dashoffset: -1; }
+        }
+
+        @keyframes aquecimentoNomeShake {
+          0%, 76%   { transform: translate(0, 0) rotate(0deg); }
+          77%       { transform: translate(-0.25%, 0) rotate(-0.4deg); }
+          78%       { transform: translate(0.25%, 0) rotate(0.4deg); }
+          79%       { transform: translate(-0.45%, 0) rotate(-0.7deg); }
+          80%       { transform: translate(0.45%, 0) rotate(0.7deg); }
+          81%       { transform: translate(-0.65%, 0) rotate(-1deg); }
+          82%       { transform: translate(0.65%, 0) rotate(1deg); }
+          83%       { transform: translate(-0.4%, -1.6%) rotate(-2.4deg); }
+          84.5%     { transform: translate(0.2%, -2.4%) rotate(-1.6deg); }
+          86%       { transform: translate(0, 2.6%) rotate(1.2deg); }
+          88%       { transform: translate(0, -0.6%) rotate(-0.3deg); }
+          90%, 100% { transform: translate(0, 0) rotate(0deg); }
+        }
+
+        @keyframes aquecimentoRiscoPunch {
+          0%, 85.5% { transform: skewX(-6deg) translateY(0)     scaleY(1);    filter: brightness(1); }
+          86%       { transform: skewX(-6deg) translateY(20%)   scaleY(0.55); filter: brightness(2.1); }
+          88%       { transform: skewX(-6deg) translateY(-7%)   scaleY(1.18); filter: brightness(1.15); }
+          91%       { transform: skewX(-6deg) translateY(2%)    scaleY(0.96); filter: brightness(1); }
+          94%, 100% { transform: skewX(-6deg) translateY(0)     scaleY(1);    filter: brightness(1); }
+        }
+
+        @keyframes aquecimentoVemCai {
+          0%, 86%   { opacity: 0; transform: translateY(-220%) scaleY(0.4); }
+          87.5%     { opacity: 1; transform: translateY(14%) scaleY(1.12); }
+          90%       { opacity: 1; transform: translateY(-5%) scaleY(0.95); }
+          92.5%     { opacity: 1; transform: translateY(0%) scaleY(1); }
+          97%       { opacity: 1; transform: translateY(0%) scaleY(1); }
+          99%, 100% { opacity: 0; transform: translateY(0%) scaleY(1); }
         }
 
         @keyframes aquecimentoAtletaPunch {

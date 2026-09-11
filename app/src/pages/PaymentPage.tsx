@@ -11,10 +11,12 @@ import { useThousandGuard } from '../hooks/useThousandGuard';
 import '../App.css';
 
 export default function PaymentPage() {
-  // Corta na hora se o limite de 1000 confirmados bater enquanto alguém está pagando.
-  useThousandGuard();
   const { registrationId } = useParams();
   const [data, setData] = useState<any>(null);
+  // Corta na hora se o limite de 1000 confirmados bater enquanto alguém está pagando - exceto
+  // quem entrou pelo link secreto/VIP (viaLinkVip na inscrição), que deve poder seguir o
+  // processo normalmente até o fim mesmo depois do corte.
+  useThousandGuard(undefined, data?.viaLinkVip !== true);
   const [loading, setLoading] = useState(true);
   const [timeLeft, setTimeLeft] = useState(300); // 5 minutos padrão
   const [checkingPayment, setCheckingPayment] = useState(false);

@@ -909,6 +909,9 @@ export default function PublicForm({ semCamiseta = false }: { semCamiseta?: bool
 
       const registrationData = {
         ...data,
+        // Marca quem entrou pelo link secreto/VIP - usado em PaymentPage.tsx pra não
+        // aplicar o corte automático de 1000 confirmados a essas inscrições.
+        viaLinkVip: semCamiseta,
         kit: activeKit?.id || data.kit,
         kitNome: activeKit?.nome || KITS[0]?.nome || '',
         kitPrecoForcado: !!activeKit?.precoForcado,

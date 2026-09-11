@@ -10,11 +10,16 @@ export const THOUSAND_THRESHOLD = 1000;
  * pelo worker via increment atomico + recalibracao por cron). Assim que cruzar 1000, redireciona
  * na hora pra "/" - mesmo quem estiver no meio da inscrição, pagamento ou qualquer outra tela.
  * Usado nas páginas do funil público (Home, inscrição, pagamento, confirmação).
+ *
+ * `enabled` (default true) permite desligar o corte sem deixar de chamar o hook (regra dos
+ * hooks) - usado em PaymentPage pra quem entrou pelo link secreto/VIP, que deve poder seguir
+ * o pagamento até o fim mesmo depois do limite de 1000 baterem.
  */
-export function useThousandGuard(onReached?: (count: number) => void) {
+export function useThousandGuard(onReached?: (count: number) => void, enabled: boolean = true) {
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (!enabled) return;
     const unsub = onSnapshot(doc(db, 'nightrun_settings', 'confirmed_counter'), snap => {
       const count = Number(snap.data()?.count ?? 0);
       if (count >= THOUSAND_THRESHOLD) {
@@ -26,5 +31,5 @@ export function useThousandGuard(onReached?: (count: number) => void) {
     }, error => console.error('[useThousandGuard] snapshot error', error));
 
     return () => unsub();
-  }, [navigate, onReached]);
+  }, [navigate, onReached, enabled]);
 }

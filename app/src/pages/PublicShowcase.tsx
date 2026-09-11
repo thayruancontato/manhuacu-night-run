@@ -134,12 +134,35 @@ export default function PublicShowcase() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [atletas]);
 
-  // Rotação: a cada intervalo, troca UMA posição aleatória (nunca a coluna toda) por outro
-  // atleta aleatório do pool completo - com isso, ao longo do tempo, todo mundo passa pela
-  // parede, e a troca em si é sempre individual, com fade (PhotoTile cuida da transição).
-  // Só escolhe posições que estão FORA da área visível no momento (via getBoundingClientRect
-  // nos elementos com data-slot), pra quem está olhando nunca ver a foto trocar na frente
-  // dele - a "nova" foto só aparece quando rola naturalmente pra dentro da tela.
+  // Rotação: a cada intervalo, troca UMA posição por outro atleta aleatório do pool completo
+  // - com isso, ao longo do tempo, todo mundo passa pela parede, e a troca em si é sempre
+  // individual, com fade (PhotoTile cuida da transição). Só escolhe posições que estão FORA
+  // da área visível no momento (via getBoundingClientRect nos elementos com data-slot), pra
+  // quem está olhando nunca ver a foto trocar na frente dele.
+  //
+  // A ordem das posições vem de uma FILA embaralhada com TODAS as combinações (coluna,
+  // altura) uma vez cada, reorganizada pra nunca repetir a mesma altura (mesmo slotIndex) em
+  // colunas diferentes muito perto uma da outra no tempo - sem isso, de vez em quando o
+  // acaso batia várias colunas na mesma altura em poucos segundos, e visualmente parecia
+  // "uma linha inteira" trocando de uma vez, mesmo sendo trocas individuais coincidindo.
+  const filaRef = useRef<{ col: number; slot: number }[]>([]);
+  const montarFila = (numColunas: number, numSlots: number) => {
+    const pares: { col: number; slot: number }[] = [];
+    for (let c = 0; c < numColunas; c++) for (let s = 0; s < numSlots; s++) pares.push({ col: c, slot: s });
+    const embaralhada = embaralhar(pares);
+    // Afasta pares consecutivos que compartilham a mesma altura (slot) em colunas diferentes.
+    for (let i = 1; i < embaralhada.length; i++) {
+      if (embaralhada[i].slot !== embaralhada[i - 1].slot) continue;
+      for (let j = i + 1; j < embaralhada.length; j++) {
+        if (embaralhada[j].slot !== embaralhada[i - 1].slot) {
+          [embaralhada[i], embaralhada[j]] = [embaralhada[j], embaralhada[i]];
+          break;
+        }
+      }
+    }
+    return embaralhada;
+  };
+
   useEffect(() => {
     const interval = setInterval(() => {
       setSlots(prev => {
@@ -147,18 +170,25 @@ export default function PublicShowcase() {
         const pool = atletasRef.current;
         if (pool.length === 0) return prev;
 
+        if (filaRef.current.length === 0) {
+          filaRef.current = montarFila(prev.length, prev[0].length);
+        }
+
         let colIndex = -1;
         let slotIndex = -1;
-        for (let tentativa = 0; tentativa < 10; tentativa++) {
-          const c = Math.floor(Math.random() * prev.length);
-          const s = Math.floor(Math.random() * prev[c].length);
-          const els = document.querySelectorAll(`[data-slot="${c}-${s}"]`);
+        const adiados: { col: number; slot: number }[] = [];
+        while (filaRef.current.length > 0) {
+          const candidato = filaRef.current.shift()!;
+          const els = document.querySelectorAll(`[data-slot="${candidato.col}-${candidato.slot}"]`);
           const visivel = els.length > 0 && Array.from(els).some(el => {
             const r = el.getBoundingClientRect();
             return r.bottom > -40 && r.top < window.innerHeight + 40;
           });
-          if (!visivel) { colIndex = c; slotIndex = s; break; }
+          if (!visivel) { colIndex = candidato.col; slotIndex = candidato.slot; break; }
+          adiados.push(candidato);
+          if (adiados.length > 20) break; // evita travar procurando indefinidamente
         }
+        filaRef.current.push(...adiados);
         if (colIndex === -1) return prev; // tudo visível agora (tela pequena) - espera o próximo tick
 
         const novoAtleta = pool[Math.floor(Math.random() * pool.length)];

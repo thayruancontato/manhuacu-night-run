@@ -883,7 +883,7 @@ export default function AdminRetiradaKits() {
       }
 
       // Resumo de pendentes
-      drawSectionTitle(`RESUMO DE KITS PENDENTES (EXTRA: ${extraPendentes.length} · MASTER: ${masterPendentes.length})`);
+      drawSectionTitle(`RESUMO DE KITS QUE FICARAM PARA RETIRADA (EXTRA: ${extraPendentes.length} · MASTER: ${masterPendentes.length})`);
       if (linhasTamanho.length === 0) {
         docPdf.setFont('helvetica', 'italic');
         docPdf.setFontSize(9);

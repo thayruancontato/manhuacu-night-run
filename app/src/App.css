@@ -5660,7 +5660,6 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   flex: 0 0 clamp(220px, 18vw, 320px);
   width: clamp(220px, 18vw, 320px);
   height: 100%;
-  background: #0f1535;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -5669,9 +5668,22 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   overflow: hidden;
 }
 
+.showcase-sidebar-top {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
 .showcase-sidebar-logo {
   width: 100%;
   max-width: 220px;
+}
+
+.showcase-sidebar-prefeitura {
+  width: 78%;
+  max-width: 170px;
 }
 
 .showcase-sidebar-section {
@@ -5679,7 +5691,7 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .showcase-sidebar-label {
@@ -5698,19 +5710,23 @@ input[type="radio"], input[type="checkbox"] { display:none; }
 }
 
 .showcase-sponsor-card {
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 10px;
   aspect-ratio: 4 / 3;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 10px;
+  padding: 6px;
 }
 
 .showcase-sponsor-card-solo {
-  width: 70%;
-  aspect-ratio: 4 / 3;
+  width: 80%;
+  aspect-ratio: auto;
+  padding: 0;
+}
+
+.showcase-sponsor-card-solo img {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
 }
 
 .showcase-sponsor-card img {

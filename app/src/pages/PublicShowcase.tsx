@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import '../App.css';
 
 // Parede de fotos em loop infinito pra telão do evento - mesmo efeito visual da tela
@@ -29,14 +29,17 @@ type Atleta = { id: string; fotoUrl: string; nome: string };
 export default function PublicShowcase() {
   const [atletas, setAtletas] = useState<Atleta[]>([]);
   const [numColunas, setNumColunas] = useState(() => calcularColunas());
+  // Assinatura do conjunto atual (ids ordenados) - usada pra NUNCA re-renderizar a parede
+  // quando o roster busca de novo e volta com o mesmo conteúdo de antes. Trocar o array de
+  // atletas por um nulo (mesmo que com os mesmos dados) reconstrói as colunas do zero e a
+  // animação CSS reinicia do começo em todo mundo ao mesmo tempo - o "quebra e reinicia"
+  // relatado. Só atualiza o estado quando o conjunto de fato mudou (alguém novo confirmou).
+  const assinaturaAtualRef = useRef('');
 
   useEffect(() => {
-    (async () => {
+    const workerUrl = import.meta.env.VITE_WORKER_URL;
+    const carregarRoster = async () => {
       try {
-        // Mesmo endpoint cacheado (KV, não Firestore direto) usado pela tela pública inicial -
-        // este showcase fica ligado o evento inteiro num telão, então cada leitura direta ao
-        // Firestore aqui se repetiria indefinidamente.
-        const workerUrl = import.meta.env.VITE_WORKER_URL;
         const res = await fetch(`${workerUrl}/roster/confirmed`);
         const data = await res.json();
         const lista: Atleta[] = (data.athletes || []).map((a: any) => ({
@@ -44,39 +47,42 @@ export default function PublicShowcase() {
           nome: a.nome || '',
           fotoUrl: a.fotoUrl || '',
         }));
+        const assinatura = lista.map(a => a.id).sort().join(',');
+        if (assinatura === assinaturaAtualRef.current) return;
+        assinaturaAtualRef.current = assinatura;
         setAtletas(lista);
       } catch (e) {
         console.error('Erro ao buscar confirmados para o showcase:', e);
       }
-    })();
-  }, []);
+    };
 
-  useEffect(() => {
-    const onResize = () => setNumColunas(calcularColunas());
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  // Recarrega a lista periodicamente - o telão fica ligado o evento inteiro, então precisa
-  // pegar gente que se inscreveu depois que a página abriu. O cache do worker já limita o
-  // custo real (KV, não Firestore) mesmo com essa atualização recorrente.
-  useEffect(() => {
-    const workerUrl = import.meta.env.VITE_WORKER_URL;
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`${workerUrl}/roster/confirmed`);
-        const data = await res.json();
-        const lista: Atleta[] = (data.athletes || []).map((a: any) => ({
-          id: a.id,
-          nome: a.nome || '',
-          fotoUrl: a.fotoUrl || '',
-        }));
-        setAtletas(lista);
-      } catch (e) {
-        console.error('Erro ao atualizar showcase:', e);
-      }
-    }, 5 * 60 * 1000);
+    carregarRoster();
+    // Recarrega periodicamente - o telão fica ligado o evento inteiro, então precisa pegar
+    // gente que confirmou depois que a página abriu. O endpoint já é cacheado (KV, não
+    // Firestore), então isso não pesa no banco mesmo rodando o dia inteiro.
+    const interval = setInterval(carregarRoster, 10 * 60 * 1000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    // Debounce + só recalcula se a largura realmente mudou de forma relevante - alguns
+    // players/TVs disparam eventos de resize espúrios (troca de overscan, etc.) que, sem
+    // essa proteção, redistribuíam as colunas à toa e reiniciavam a animação inteira.
+    let larguraAnterior = window.innerWidth;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const onResize = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        if (Math.abs(window.innerWidth - larguraAnterior) < 80) return;
+        larguraAnterior = window.innerWidth;
+        setNumColunas(calcularColunas());
+      }, 800);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
   const colunas = Array.from({ length: numColunas }, (_, colIndex) => {
@@ -118,7 +124,10 @@ export default function PublicShowcase() {
       </div>
 
       <div className="showcase-sidebar">
-        <img src="/LOGO NIGHT RUN SEM FUNDO (em amarelo).png" alt="MCU Night Run" className="showcase-sidebar-logo" />
+        <div className="showcase-sidebar-top">
+          <img src="/LOGO NIGHT RUN SEM FUNDO (em amarelo).png" alt="MCU Night Run" className="showcase-sidebar-logo" />
+          <img src="/BRANCOS/PREFEITURA ESPORTE.png" alt="Prefeitura de Manhuaçu - Esporte" className="showcase-sidebar-prefeitura" />
+        </div>
 
         <div className="showcase-sidebar-section">
           <span className="showcase-sidebar-label">Realização</span>

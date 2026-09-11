@@ -1,3 +1,19 @@
+function Letras({ text, className = '' }: { text: string; className?: string }) {
+  return (
+    <>
+      {text.split('').map((ch, i) => (
+        <span
+          key={i}
+          className={`aq-letra ${className}`}
+          style={{ animationDelay: `${i * 0.07}s` }}
+        >
+          {ch === ' ' ? ' ' : ch}
+        </span>
+      ))}
+    </>
+  );
+}
+
 const APOIADORES_LOGO = [
   { nome: 'Prefeitura de Manhuaçu - Esporte', src: '/BRANCOS/PREFEITURA ESPORTE.png' },
   { nome: 'Ademare', src: '/BRANCOS/ADEMARE.png' },
@@ -18,24 +34,30 @@ export default function Aquecimento() {
 
         <img src="/aquecimento-logo-gv.png" alt="" className="aquecimento-logo-marca" aria-hidden="true" />
 
+        <svg className="aquecimento-fita" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <path className="aquecimento-fita-path aquecimento-fita-b" d="M 15 0 L 85 100" pathLength={1} />
+        </svg>
+
         <div className="aquecimento-texto">
-          <p className="aq-linha1">MOMENTO DE</p>
+          <p className="aq-linha1"><Letras text="MOMENTO DE" /></p>
           <p className="aq-linha2">
-            AQUECIMENTO
-            <span className="aq-risco aq-risco1" />
+            <Letras text="AQUECIMENTO" />
           </p>
-          <p className="aq-com">
-            COM
-            <span className="aq-risco aq-risco2" />
-          </p>
-          <p className="aq-nome1">GLAUBER</p>
+          <p className="aq-nome1"><Letras text="GLAUBER" /></p>
           <p className="aq-nome2">
-            VALENTIM
+            <Letras text="VALENTIM" />
             <span className="aq-risco aq-risco3" />
           </p>
         </div>
 
-        <img src="/aquecimento-atleta.png" alt="Glauber Valentim" className="aquecimento-layer aquecimento-atleta" />
+        <svg className="aquecimento-fita" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <path className="aquecimento-fita-path aquecimento-fita-a" d="M -15 100 L 15 0" pathLength={1} />
+          <path className="aquecimento-fita-path aquecimento-fita-c" d="M 85 100 L 115 0" pathLength={1} />
+        </svg>
+
+        <div className="aquecimento-atleta-flutua">
+          <img src="/aquecimento-atleta.png" alt="Glauber Valentim" className="aquecimento-layer aquecimento-atleta" />
+        </div>
 
         <div className="aquecimento-logos">
           {APOIADORES_LOGO.map((logo, i) => (
@@ -74,6 +96,7 @@ export default function Aquecimento() {
           width: min(100%, calc(100svh * 5333 / 4000));
           line-height: 0;
           transform-origin: 50% 50%;
+          will-change: transform;
           animation: aquecimentoZoom 15s ease-in-out infinite;
         }
 
@@ -86,9 +109,45 @@ export default function Aquecimento() {
           display: block;
         }
 
+        .aquecimento-atleta-flutua {
+          position: absolute;
+          inset: 0;
+          transform-origin: 50% 100%;
+          will-change: transform;
+          animation: aquecimentoAtletaFloat 4.6s ease-in-out infinite;
+        }
+
         .aquecimento-atleta {
+          will-change: transform;
           animation: aquecimentoAtletaPunch 15s ease-out infinite;
         }
+
+        .aquecimento-fita {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          overflow: visible;
+          pointer-events: none;
+          filter: drop-shadow(0 0 14px rgba(107,255,42,0.65));
+        }
+
+        .aquecimento-fita-path {
+          fill: none;
+          stroke: #6BFF2A;
+          stroke-width: 3.2;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+          stroke-dasharray: 1 1;
+          stroke-dashoffset: 1;
+          animation-duration: 10s;
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
+        }
+
+        .aquecimento-fita-a { animation-name: aquecimentoFitaA; }
+        .aquecimento-fita-b { animation-name: aquecimentoFitaB; }
+        .aquecimento-fita-c { animation-name: aquecimentoFitaC; }
 
         .aquecimento-logo-marca {
           position: absolute;
@@ -105,9 +164,13 @@ export default function Aquecimento() {
         .aquecimento-texto {
           position: absolute;
           left: 3%;
-          top: 8%;
-          width: 56%;
-          line-height: 0.92;
+          top: 4%;
+          bottom: 20%;
+          width: 58%;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          gap: 2%;
           font-family: 'Aquecimento Anton', 'Arial Narrow', sans-serif;
           text-transform: uppercase;
         }
@@ -115,41 +178,37 @@ export default function Aquecimento() {
         .aquecimento-texto p {
           margin: 0;
           position: relative;
+          line-height: 0.92;
           transform: skewX(-6deg);
+        }
+
+        .aq-letra {
+          display: inline-block;
+          animation: aquecimentoLetraFloat 2.6s ease-in-out infinite;
         }
 
         .aq-linha1 {
           color: #fff;
-          font-size: clamp(1.1rem, 4.6vw, 3.6rem);
+          font-size: clamp(1.7rem, 7.6vw, 6rem);
           text-shadow: 0 3px 0 rgba(0,0,0,0.35), 0 0 18px rgba(0,0,0,0.3);
         }
 
         .aq-linha2 {
           color: #6BFF2A;
-          font-size: clamp(1.5rem, 6.4vw, 5rem);
+          font-size: clamp(2.5rem, 11vw, 8.8rem);
           text-shadow: 0 4px 0 rgba(0,0,0,0.4);
-          margin-bottom: 6%;
-          animation: aquecimentoGlow 3.4s ease-in-out infinite;
-        }
-
-        .aq-com {
-          color: #fff;
-          font-size: clamp(0.7rem, 2.4vw, 1.7rem);
-          margin-top: 4%;
         }
 
         .aq-nome1 {
           color: #fff;
-          font-size: clamp(1.2rem, 5vw, 4rem);
+          font-size: clamp(2.4rem, 10.5vw, 8.2rem);
           text-shadow: 0 3px 0 rgba(0,0,0,0.35);
         }
 
         .aq-nome2 {
           color: #6BFF2A;
-          font-size: clamp(1.2rem, 5vw, 4rem);
+          font-size: clamp(2.4rem, 10.5vw, 8.2rem);
           text-shadow: 0 3px 0 rgba(0,0,0,0.35);
-          animation: aquecimentoGlow 3.4s ease-in-out infinite;
-          animation-delay: 1.2s;
         }
 
         .aq-risco {
@@ -161,8 +220,6 @@ export default function Aquecimento() {
           transform: skewX(-6deg);
         }
 
-        .aq-risco1 { bottom: -0.22em; width: 78%; }
-        .aq-risco2 { bottom: -0.3em; width: 55%; height: 0.1em; }
         .aq-risco3 { bottom: -0.24em; width: 82%; }
 
         .aquecimento-logos {
@@ -173,7 +230,7 @@ export default function Aquecimento() {
           display: flex;
           flex-wrap: wrap;
           align-items: center;
-          gap: 6.5% 6%;
+          gap: 15% 6%;
         }
 
         .aquecimento-logos img {
@@ -190,9 +247,40 @@ export default function Aquecimento() {
           50%      { transform: translateY(-4px); opacity: 1; }
         }
 
-        @keyframes aquecimentoGlow {
-          0%, 100% { filter: brightness(1); }
-          50%      { filter: brightness(1.35); }
+        @keyframes aquecimentoLetraFloat {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(-0.14em); }
+        }
+
+        @keyframes aquecimentoAtletaFloat {
+          0%, 100% { transform: scale(1); }
+          50%      { transform: scale(1.018); }
+        }
+
+        @keyframes aquecimentoFitaA {
+          0%     { stroke-dashoffset: 1; }
+          4.7%   { stroke-dashoffset: 0; }
+          22.7%  { stroke-dashoffset: 0; }
+          27.4%  { stroke-dashoffset: -1; }
+          100%   { stroke-dashoffset: -1; }
+        }
+
+        @keyframes aquecimentoFitaB {
+          0%     { stroke-dashoffset: 1; }
+          4.7%   { stroke-dashoffset: 1; }
+          9.3%   { stroke-dashoffset: 0; }
+          27.4%  { stroke-dashoffset: 0; }
+          32%    { stroke-dashoffset: -1; }
+          100%   { stroke-dashoffset: -1; }
+        }
+
+        @keyframes aquecimentoFitaC {
+          0%     { stroke-dashoffset: 1; }
+          9.3%   { stroke-dashoffset: 1; }
+          14%    { stroke-dashoffset: 0; }
+          32%    { stroke-dashoffset: 0; }
+          36.7%  { stroke-dashoffset: -1; }
+          100%   { stroke-dashoffset: -1; }
         }
 
         @keyframes aquecimentoAtletaPunch {
@@ -204,12 +292,12 @@ export default function Aquecimento() {
 
         @keyframes aquecimentoZoom {
           0%   { transform: scale(1);    transform-origin: 50% 50%; }
-          4%   { transform: scale(1.55); transform-origin: 22% 34%; }
-          12%  { transform: scale(1.55); transform-origin: 22% 34%; }
-          18%  { transform: scale(1.55); transform-origin: 62% 68%; }
-          26%  { transform: scale(1.55); transform-origin: 62% 68%; }
-          32%  { transform: scale(1.55); transform-origin: 80% 18%; }
-          40%  { transform: scale(1.55); transform-origin: 80% 18%; }
+          4%   { transform: scale(1.55); transform-origin: 32% 40%; }
+          12%  { transform: scale(1.55); transform-origin: 32% 40%; }
+          18%  { transform: scale(2.2);  transform-origin: 23% 88%; }
+          26%  { transform: scale(2.2);  transform-origin: 23% 88%; }
+          32%  { transform: scale(1.55); transform-origin: 64% 20%; }
+          40%  { transform: scale(1.55); transform-origin: 64% 20%; }
           46%  { transform: scale(1);    transform-origin: 50% 50%; }
           100% { transform: scale(1);    transform-origin: 50% 50%; }
         }

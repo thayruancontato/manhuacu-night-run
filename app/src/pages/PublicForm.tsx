@@ -229,6 +229,23 @@ const formatRegistrationNotice = ({
     (invoiceUrl ? `*Link direto do banco:* ${invoiceUrl}` : '');
 };
 
+// Link secreto/VIP: se a gravação no Firestore falhar (ex: cota diaria esgotada), a ficha
+// preenchida vai direto pro WhatsApp da equipe em vez de travar a inscrição - mesma
+// mensagem completa que já usamos pro aviso interno, só mudando o destino.
+const NUMERO_FICHA_VIP = '5533998200546';
+const abrirWhatsAppComFichaVip = (registrationData: any) => {
+  const texto = formatRegistrationNotice({
+    registration: registrationData,
+    amount: registrationData.amount || 0,
+    paymentPageUrl: '',
+    categoriaNome: registrationData.categoria || '',
+    modalidadeNome: registrationData.modalidadeNome || '',
+    camisetaLabel: '',
+    invoiceUrl: '',
+  });
+  window.open(`https://wa.me/${NUMERO_FICHA_VIP}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener,noreferrer');
+};
+
 export default function PublicForm({ semCamiseta = false }: { semCamiseta?: boolean }) {
   const navigate = useNavigate();
   const { showAlert } = useDialog();
@@ -943,7 +960,23 @@ export default function PublicForm({ semCamiseta = false }: { semCamiseta?: bool
         createdAt: serverTimestamp(),
       };
       console.log('[PublicForm] firestore:addDoc:start', { asaasPaymentId, invoiceUrl, hasCard: Boolean(euVouCardUrl) });
-      const docRef = await addDoc(collection(db, 'nightrun_registrations'), registrationData);
+      let docRef: Awaited<ReturnType<typeof addDoc>>;
+      try {
+        docRef = await addDoc(collection(db, 'nightrun_registrations'), registrationData);
+      } catch (firestoreError) {
+        // Link secreto/VIP: se não conseguir gravar (ex: cota do Firestore esgotada), em vez
+        // de travar a inscrição, manda a ficha pronta pro WhatsApp da equipe cadastrar por
+        // fora - mesma saída usada na inscrição escolar. O fluxo normal (/inscricao) não
+        // muda em nada: continua propagando o erro pra tela normal de erro.
+        if (semCamiseta) {
+          console.error('[PublicForm] VIP addDoc falhou, enviando ficha por WhatsApp', firestoreError);
+          abrirWhatsAppComFichaVip(registrationData);
+          showAlert('Não deu pra salvar automaticamente agora. Abrimos o WhatsApp com a ficha pronta pra equipe confirmar seu cadastro manualmente.', 'warning');
+          setLoading(false);
+          return;
+        }
+        throw firestoreError;
+      }
       console.log('[PublicForm] firestore:addDoc:done', { registrationId: docRef.id });
 
       const paymentPageUrl = `https://night-run-uba.web.app/inscricao/pagamento/${docRef.id}`;

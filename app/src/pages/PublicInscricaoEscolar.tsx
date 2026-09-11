@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { useParams } from 'react-router-dom';
-import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, runTransaction, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getFriendlyErrorMessage } from '../utils/errorMessageUtils';
 import { Camera, CheckCircle2, Clock, GraduationCap, Loader2, MessageCircle, Plus, School, Trash2, X, XCircle } from 'lucide-react';
@@ -81,7 +81,10 @@ const calcularIdade = (dobStr: string) => {
 
 const gerarNumeroInscricao = () => String(Math.floor(10000000 + Math.random() * 90000000));
 
-const NUMERO_AVISO_INSCRICAO = '5533998200546';
+// Inscrição escolar não grava a ficha do aluno no banco (só a vaga é contabilizada no link) -
+// o encaminhamento pra virar inscrição de verdade é manual, via WhatsApp, com a equipe do
+// evento lendo a ficha enviada aqui e cadastrando por fora.
+const NUMERO_FICHA_ESCOLAR = '553399212710';
 
 type AlunoConfirmado = {
   nome: string;
@@ -211,47 +214,24 @@ export default function PublicInscricaoEscolar() {
     setEnviando(true);
     try {
       const linkRef = doc(db, 'nightrun_links_escolares', codigo);
+      // Nada da ficha do aluno é gravado - só o contador de vagas do link é atualizado, pra
+      // manter o limite de alunos por escola. A ficha em si só existe na mensagem do
+      // WhatsApp; quem cadastra de verdade no sistema é a equipe do evento, manualmente.
       const preparados = alunos.map(a => {
         const idade = calcularIdade(a.dataNascimento);
         const modalidade = modalidadeParaIdade(idade)!;
         return {
-          ref: doc(collection(db, 'nightrun_registrations')),
-          numeroInscricao: gerarNumeroInscricao(),
           nome: a.nome.trim(),
-          data: {
-            nome: a.nome.trim(),
-            cpf: onlyDigits(a.cpf),
-            dataNascimento: a.dataNascimento,
-            sexo: a.sexo,
-            telefone: onlyDigits(a.telefone),
-            responsavelNome: a.responsavelNome.trim(),
-            responsavelCpf: onlyDigits(a.responsavelCpf),
-            endereco: { cidade: a.cidade.trim(), uf: a.uf.trim().toUpperCase() },
-            categoria: 'infantil',
-            modalidadeId: modalidade.id,
-            modalidadeNome: modalidade.nome,
-            fotoUrl: a.fotoUrl || '',
-            kit: '',
-            kitNome: 'Sem kit (cortesia escolar)',
-            idadeNoCadastro: idade,
-            paymentStatus: 'pago',
-            gratuito: true,
-            tipoInscricao: 'gratuita',
-            paymentConfirmedAt: serverTimestamp(),
-            amount: 0,
-            registrationAmount: 0,
-            paymentFee: 0,
-            originalAmount: 0,
-            tagEscolar: true,
-            escolaNome: link?.escola || '',
-            linkEscolarCodigo: codigo,
-            termos: true,
-            aceitouTermosResponsabilidade: true,
-            regulamentoAceito: true,
-            regulamentoAceitoEm: new Date().toISOString(),
-            contractStatus: 'pendente',
-            createdAt: serverTimestamp(),
-          },
+          numeroInscricao: gerarNumeroInscricao(),
+          cpf: onlyDigits(a.cpf),
+          dataNascimento: a.dataNascimento,
+          sexo: a.sexo === 'F' ? 'Feminino' : 'Masculino',
+          telefone: onlyDigits(a.telefone),
+          responsavelNome: a.responsavelNome.trim(),
+          responsavelCpf: onlyDigits(a.responsavelCpf),
+          cidade: a.cidade.trim(),
+          uf: a.uf.trim().toUpperCase(),
+          modalidadeNome: modalidade.nome,
         };
       });
 
@@ -264,24 +244,15 @@ export default function PublicInscricaoEscolar() {
         if (novoUsados > atual.maxAlunos) {
           throw new Error(`Restam apenas ${Math.max(atual.maxAlunos - atual.usados, 0)} vaga(s) para esta escola.`);
         }
-        preparados.forEach(p => transaction.set(p.ref, { ...p.data, numeroInscricao: p.numeroInscricao }));
         transaction.update(linkRef, { usados: novoUsados });
       });
 
-      setResultado(preparados.map(p => ({
-        nome: p.nome,
-        numeroInscricao: p.numeroInscricao,
-        cpf: p.data.cpf,
-        dataNascimento: p.data.dataNascimento,
-        sexo: p.data.sexo === 'F' ? 'Feminino' : 'Masculino',
-        telefone: p.data.telefone,
-        responsavelNome: p.data.responsavelNome,
-        responsavelCpf: p.data.responsavelCpf,
-        cidade: p.data.endereco.cidade,
-        uf: p.data.endereco.uf,
-        modalidadeNome: p.data.modalidadeNome,
-      })));
+      setResultado(preparados);
       setStatus('enviado');
+      // Melhor esforço - o clique original que chamou enviar() ainda deve valer como gesto
+      // do usuário pro navegador não bloquear o pop-up; o botão na tela seguinte cobre o
+      // caso de o navegador bloquear mesmo assim.
+      abrirWhatsAppComFicha(preparados);
     } catch (e: any) {
       console.error('Erro ao enviar inscrição escolar:', e);
       const mensagensConhecidas = ['Link não encontrado.', 'Este link foi desativado.'];
@@ -292,11 +263,11 @@ export default function PublicInscricaoEscolar() {
     }
   };
 
-  const avisarInscricaoConfirmada = () => {
-    const linhas = resultado.map((r, i) => (
+  const abrirWhatsAppComFicha = (lista: AlunoConfirmado[]) => {
+    const linhas = lista.map((r, i) => (
       `\n*Aluno ${i + 1}:*\n` +
       `*Nome:* ${r.nome.toUpperCase()}\n` +
-      `*Nº de inscrição:* ${r.numeroInscricao}\n` +
+      `*Nº de referência:* ${r.numeroInscricao}\n` +
       `*CPF:* ${r.cpf}\n` +
       `*Nascimento:* ${r.dataNascimento}\n` +
       `*Sexo:* ${r.sexo}\n` +
@@ -306,8 +277,8 @@ export default function PublicInscricaoEscolar() {
       `*CPF do responsável:* ${r.responsavelCpf}\n` +
       `*WhatsApp do responsável:* ${r.telefone}`
     )).join('\n');
-    const texto = `Inscrição cortesia escolar confirmada!\n\n*Escola:* ${link?.escola || '-'}\n${linhas}`;
-    window.open(`https://wa.me/${NUMERO_AVISO_INSCRICAO}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener,noreferrer');
+    const texto = `Ficha de inscrição escolar (cortesia)\n\n*Escola:* ${link?.escola || '-'}\n${linhas}`;
+    window.open(`https://wa.me/${NUMERO_FICHA_ESCOLAR}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener,noreferrer');
   };
 
   if (status === 'carregando') {
@@ -359,27 +330,27 @@ export default function PublicInscricaoEscolar() {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', padding: 20, textAlign: 'center' }}>
         <CheckCircle2 size={48} color="#16a34a" />
-        <h1 style={{ color: '#071A45', marginTop: 16, fontSize: '1.3rem' }}>Inscrições confirmadas!</h1>
+        <h1 style={{ color: '#071A45', marginTop: 16, fontSize: '1.3rem' }}>Vaga reservada!</h1>
+        <p style={{ color: '#64748b', maxWidth: 380 }}>Envie a ficha abaixo pelo WhatsApp pra equipe do evento confirmar o cadastro.</p>
         <div style={{ background: '#fff', borderRadius: 14, padding: 20, marginTop: 16, maxWidth: 420, width: '100%', textAlign: 'left' }}>
           {resultado.map(r => (
             <div key={r.numeroInscricao} style={{ padding: '10px 0', borderBottom: '1px solid #f1f5f9' }}>
               <strong style={{ color: '#071A45' }}>{r.nome.toUpperCase()}</strong>
-              <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Nº de inscrição: {r.numeroInscricao}</div>
             </div>
           ))}
         </div>
         <button
           type="button"
-          onClick={avisarInscricaoConfirmada}
+          onClick={() => abrirWhatsAppComFicha(resultado)}
           style={{
             marginTop: 20, background: '#25D366', color: '#fff', border: 'none', borderRadius: 14,
             padding: '16px 28px', fontWeight: 900, fontSize: '0.9rem', cursor: 'pointer',
             display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 4px 12px rgba(37,211,102,0.35)',
           }}
         >
-          <MessageCircle size={20} /> AVISAR INSCRIÇÃO CONFIRMADA
+          <MessageCircle size={20} /> ENVIAR FICHA NO WHATSAPP
         </button>
-        <p style={{ color: '#64748b', maxWidth: 380, marginTop: 16 }}>Guarde os números de inscrição. Nos vemos no dia da corrida!</p>
+        <p style={{ color: '#64748b', maxWidth: 380, marginTop: 16 }}>Se o WhatsApp não abriu sozinho, use o botão acima.</p>
       </div>
     );
   }

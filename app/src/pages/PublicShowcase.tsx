@@ -26,6 +26,19 @@ const APOIADORES = [
 
 type Atleta = { id: string; fotoUrl: string; nome: string };
 
+// Fisher-Yates - o roster chega sempre ordenado por nome (feito assim de propósito no
+// worker, pra ficar estável entre chamadas), então sem embaralhar aqui a parede mostrava
+// sempre a mesma composição/posição a cada abertura da página. Embaralha uma vez por
+// atualização real da lista (não a cada re-render).
+const embaralhar = <T,>(lista: T[]): T[] => {
+  const copia = [...lista];
+  for (let i = copia.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copia[i], copia[j]] = [copia[j], copia[i]];
+  }
+  return copia;
+};
+
 export default function PublicShowcase() {
   const [atletas, setAtletas] = useState<Atleta[]>([]);
   const [numColunas, setNumColunas] = useState(() => calcularColunas());
@@ -50,7 +63,7 @@ export default function PublicShowcase() {
         const assinatura = lista.map(a => a.id).sort().join(',');
         if (assinatura === assinaturaAtualRef.current) return;
         assinaturaAtualRef.current = assinatura;
-        setAtletas(lista);
+        setAtletas(embaralhar(lista));
       } catch (e) {
         console.error('Erro ao buscar confirmados para o showcase:', e);
       }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { jsPDF } from 'jspdf';
 import { collection, doc, getDocs, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { fetchKits, resolveKitNome, type KitRecord } from '../utils/kitsUtils';
@@ -7,7 +8,7 @@ import { formatDateBR } from '../utils/dateUtils';
 import PageContainer from '../components/PageContainer';
 import PageTitle from '../components/PageTitle';
 import { useDialog } from '../context/CustomDialogContext';
-import { Search, Plus, X, Download, Hash } from 'lucide-react';
+import { Search, Plus, X, Download, Hash, FileDown } from 'lucide-react';
 import '../styles/admin.css';
 
 type Reg = {
@@ -39,6 +40,7 @@ export default function AdminNumeroPeito() {
   const [kitsCadastrados, setKitsCadastrados] = useState<KitRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [gerando, setGerando] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -123,6 +125,138 @@ export default function AdminNumeroPeito() {
     showAlert('Exportação CSV iniciada!', 'success');
   };
 
+  const modalidadeNomeDe = (r: Reg) => modalidades.find(m => m.id === r.modalidadeId)?.nome || 'Outra';
+
+  const gerarPdf = async () => {
+    if (naLista.length === 0) return showAlert('A lista está vazia.', 'warning');
+    setGerando(true);
+    try {
+      const headerBase64: string = await new Promise((resolve, reject) => {
+        fetch(`/header.png?v=${Date.now()}`, { cache: 'no-store' })
+          .then(res => res.blob())
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Falha ao carregar header.png'));
+            reader.readAsDataURL(blob);
+          })
+          .catch(reject);
+      });
+
+      const titleFont = new FontFace('Anton', 'url(/fonts/Anton-Regular.ttf)');
+      await titleFont.load();
+      (document as any).fonts.add(titleFont);
+      const titleText = 'SEM NÚMERO DE PEITO';
+      const titleCanvas = document.createElement('canvas');
+      const titleCtx = titleCanvas.getContext('2d')!;
+      titleCtx.font = '90px Anton';
+      const titleSkew = 0.22;
+      const titlePadding = 24;
+      const titleTextW = titleCtx.measureText(titleText).width;
+      titleCanvas.width = titleTextW + titleSkew * 100 + titlePadding * 2;
+      titleCanvas.height = 130;
+      titleCtx.font = '90px Anton';
+      titleCtx.setTransform(1, 0, -titleSkew, 1, titlePadding, 92);
+      titleCtx.fillStyle = 'rgb(7, 26, 69)';
+      titleCtx.textBaseline = 'alphabetic';
+      titleCtx.fillText(titleText, 0, 0);
+      const titleImgData = titleCanvas.toDataURL('image/png');
+      const titleImgAspect = titleCanvas.width / titleCanvas.height;
+      const titleImgH = 11;
+      const titleImgW = titleImgH * titleImgAspect;
+
+      const docPdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageW = docPdf.internal.pageSize.getWidth();
+      const pageH = docPdf.internal.pageSize.getHeight();
+      const marginX = 14;
+      const marginBottom = 14;
+      const headerAspect = 2172 / 724;
+      const headerW = pageW;
+      const headerH = headerW / headerAspect;
+      const NAVY: [number, number, number] = [7, 26, 69];
+      const STRIPE: [number, number, number] = [241, 245, 249];
+
+      const drawHeader = () => {
+        try {
+          docPdf.addImage(headerBase64, 'PNG', 0, 0, headerW, headerH, 'numero-peito-pdf-header', 'FAST');
+        } catch {
+          docPdf.setFillColor(...NAVY);
+          docPdf.rect(0, 0, pageW, headerH, 'F');
+        }
+      };
+
+      const usableW = pageW - marginX * 2;
+      const colNomeW = usableW * 0.36;
+      const colCpfW = usableW * 0.2;
+      const colTelefoneW = usableW * 0.2;
+      const colModalidadeW = usableW * 0.24;
+      const colCpfX = marginX + colNomeW;
+      const colTelefoneX = colCpfX + colCpfW;
+      const colModalidadeX = colTelefoneX + colTelefoneW;
+      const rowH = 6.4;
+
+      let y = 0;
+
+      const drawTableHeader = () => {
+        docPdf.setFillColor(...NAVY);
+        docPdf.rect(marginX, y, usableW, 7.5, 'F');
+        docPdf.setFont('helvetica', 'bold');
+        docPdf.setFontSize(7.5);
+        docPdf.setTextColor(255, 255, 255);
+        docPdf.text('NOME', marginX + 2.5, y + 5.2);
+        docPdf.text('CPF', colCpfX + 2.5, y + 5.2);
+        docPdf.text('TELEFONE', colTelefoneX + 2.5, y + 5.2);
+        docPdf.text('MODALIDADE', colModalidadeX + 2.5, y + 5.2);
+        y += 7.5;
+      };
+
+      const newPage = () => {
+        docPdf.addPage();
+        drawHeader();
+        y = headerH + 8;
+        drawTableHeader();
+      };
+
+      drawHeader();
+      y = headerH + 8;
+      docPdf.addImage(titleImgData, 'PNG', marginX, y - titleImgH + 3, titleImgW, titleImgH, undefined, 'FAST');
+      y += 5;
+      docPdf.setFont('helvetica', 'italic');
+      docPdf.setFontSize(8.5);
+      docPdf.setTextColor(100, 116, 139);
+      docPdf.text(`${naLista.length} atleta(s) ainda sem número de peito.`, marginX, y);
+      y += 5;
+      drawTableHeader();
+
+      naLista.forEach((r, idx) => {
+        if (y + rowH > pageH - marginBottom) newPage();
+
+        if (idx % 2 === 1) {
+          docPdf.setFillColor(...STRIPE);
+          docPdf.rect(marginX, y, usableW, rowH, 'F');
+        }
+
+        docPdf.setFont('helvetica', 'normal');
+        docPdf.setFontSize(7.4);
+        docPdf.setTextColor(...NAVY);
+        const nomeLine = docPdf.splitTextToSize(r.nome.toUpperCase(), colNomeW - 3)[0];
+        const modalidadeLine = docPdf.splitTextToSize(modalidadeNomeDe(r), colModalidadeW - 3)[0];
+        docPdf.text(nomeLine, marginX + 2.5, y + rowH / 2 + 1.2);
+        docPdf.text(maskCpfDisplay(r.cpf), colCpfX + 2.5, y + rowH / 2 + 1.2);
+        docPdf.text(r.telefone || '-', colTelefoneX + 2.5, y + rowH / 2 + 1.2);
+        docPdf.text(modalidadeLine, colModalidadeX + 2.5, y + rowH / 2 + 1.2);
+        y += rowH;
+      });
+
+      docPdf.save(`sem-numero-peito-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (e) {
+      console.error('Erro ao gerar PDF da lista sem número de peito:', e);
+      showAlert('Erro ao gerar PDF. Tente novamente.', 'error');
+    } finally {
+      setGerando(false);
+    }
+  };
+
   if (loading) return <PageContainer><p>Carregando...</p></PageContainer>;
 
   return (
@@ -178,17 +312,30 @@ export default function AdminNumeroPeito() {
             <Hash size={18} color="#071A45" />
             <strong style={{ color: '#071A45' }}>Lista atual ({naLista.length})</strong>
           </div>
-          <button
-            onClick={exportar}
-            disabled={naLista.length === 0}
-            style={{
-              background: naLista.length === 0 ? '#94a3b8' : '#071A45', color: '#fff', border: 'none', borderRadius: 10,
-              padding: '12px 20px', fontWeight: 800, fontSize: '0.82rem', cursor: naLista.length === 0 ? 'not-allowed' : 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-            }}
-          >
-            <Download size={16} /> EXPORTAR EXCEL (CSV)
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              onClick={exportar}
+              disabled={naLista.length === 0}
+              style={{
+                background: naLista.length === 0 ? '#94a3b8' : '#071A45', color: '#fff', border: 'none', borderRadius: 10,
+                padding: '12px 20px', fontWeight: 800, fontSize: '0.82rem', cursor: naLista.length === 0 ? 'not-allowed' : 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+              }}
+            >
+              <Download size={16} /> EXPORTAR EXCEL (CSV)
+            </button>
+            <button
+              onClick={gerarPdf}
+              disabled={gerando || naLista.length === 0}
+              style={{
+                background: naLista.length === 0 ? '#94a3b8' : (gerando ? '#94a3b8' : '#eff6ff'), color: naLista.length === 0 ? '#fff' : (gerando ? '#fff' : '#2563eb'), border: 'none', borderRadius: 10,
+                padding: '12px 20px', fontWeight: 800, fontSize: '0.82rem', cursor: (gerando || naLista.length === 0) ? 'not-allowed' : 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+              }}
+            >
+              <FileDown size={16} /> {gerando ? 'GERANDO...' : 'GERAR PDF'}
+            </button>
+          </div>
         </div>
 
         {naLista.length === 0 ? (

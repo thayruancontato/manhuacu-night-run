@@ -229,7 +229,7 @@ const formatRegistrationNotice = ({
     (invoiceUrl ? `*Link direto do banco:* ${invoiceUrl}` : '');
 };
 
-export default function PublicForm() {
+export default function PublicForm({ semCamiseta = false }: { semCamiseta?: boolean }) {
   const navigate = useNavigate();
   const { showAlert } = useDialog();
   const sigCanvas = useRef<SignatureCanvas | null>(null);
@@ -319,7 +319,7 @@ export default function PublicForm() {
     (data.integranteEquipe !== 'sim' || data.equipeNome.trim().length >= 2);
   const emergencyValid = data.contatoEmergencia.nome.length > 3 && data.contatoEmergencia.telefone.length >= 14;
   const modalityValid = !!data.modalidadeId && !!selectedModalidade;
-  const shirtValid = !!data.tamanhoCamiseta;
+  const shirtValid = semCamiseta || !!data.tamanhoCamiseta;
   const photoValid = !!data.fotoUrl;
   const healthValid = !!data.saude.condicaoSaude;
   const firstStageValid = personalValid && emergencyValid && modalityValid && shirtValid && photoValid && healthValid;
@@ -1265,7 +1265,7 @@ export default function PublicForm() {
                   </section>
 
                   <section className="single-form-section">
-                    <div className="single-section-heading"><span>04</span><div><h2>Prova, camiseta e foto</h2><p>A foto fica ao lado do kit para economizar espaço vertical.</p></div></div>
+                    <div className="single-section-heading"><span>04</span><div><h2>{semCamiseta ? 'Prova e foto' : 'Prova, camiseta e foto'}</h2><p>A foto fica ao lado do kit para economizar espaço vertical.</p></div></div>
                     <div className="single-modality-area">
                       {data.categoria !== 'infantil' && (
                         <div className="form-group">
@@ -1308,17 +1308,19 @@ export default function PublicForm() {
                         )
                       )}
                     </div>
-                    <div className="single-kit-photo-layout">
-                      <div className="single-shirt-panel">
-                        <div className="single-shirt-head"><div><label>Tamanho da camiseta *</label><strong>{selectedCamiseta?.label || 'Selecione o tamanho'}</strong></div></div>
-                        <p className="single-shirt-disclaimer">* A camiseta não faz parte deste kit. Coletamos o tamanho para o caso de disponibilizarmos camisetas para venda futuramente.</p>
-                        <div className="size-table-container" onClick={() => setShowSizeTable(true)} style={{ marginBottom: 16, borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', cursor: 'zoom-in' }}>
-                          <img src={sizeTableImage} alt="Tabela de tamanhos" style={{ width: '100%', display: 'block', height: 'auto' }} />
-                          <div style={{ padding: 8, textAlign: 'center', fontSize: '0.7rem', color: '#6BFF2A', fontWeight: 600, background: 'rgba(0,0,0,0.3)' }}>CLIQUE PARA AMPLIAR</div>
+                    <div className={`single-kit-photo-layout ${semCamiseta ? 'single-kit-photo-layout-sem-camiseta' : ''}`}>
+                      {!semCamiseta && (
+                        <div className="single-shirt-panel">
+                          <div className="single-shirt-head"><div><label>Tamanho da camiseta *</label><strong>{selectedCamiseta?.label || 'Selecione o tamanho'}</strong></div></div>
+                          <p className="single-shirt-disclaimer">* A camiseta não faz parte deste kit. Coletamos o tamanho para o caso de disponibilizarmos camisetas para venda futuramente.</p>
+                          <div className="size-table-container" onClick={() => setShowSizeTable(true)} style={{ marginBottom: 16, borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', cursor: 'zoom-in' }}>
+                            <img src={sizeTableImage} alt="Tabela de tamanhos" style={{ width: '100%', display: 'block', height: 'auto' }} />
+                            <div style={{ padding: 8, textAlign: 'center', fontSize: '0.7rem', color: '#6BFF2A', fontWeight: 600, background: 'rgba(0,0,0,0.3)' }}>CLIQUE PARA AMPLIAR</div>
+                          </div>
+                          <div className="single-size-group"><span>Padrão</span><div className="single-size-grid">{renderCamisetaCards('Padrão')}</div></div>
+                          <div className="single-size-group"><span>Baby Look</span><div className="single-size-grid">{renderCamisetaCards('Baby Look')}</div></div>
                         </div>
-                        <div className="single-size-group"><span>Padrão</span><div className="single-size-grid">{renderCamisetaCards('Padrão')}</div></div>
-                        <div className="single-size-group"><span>Baby Look</span><div className="single-size-grid">{renderCamisetaCards('Baby Look')}</div></div>
-                      </div>
+                      )}
                       <aside className={`single-photo-card ${data.fotoUrl ? 'has-photo' : ''}`}>
                         <div className="single-photo-title"><Camera size={20} /><span>Foto do atleta</span></div>
                         {data.fotoUrl ? (
@@ -1359,7 +1361,7 @@ export default function PublicForm() {
                       ['Dados', personalValid],
                       ['Emergência', emergencyValid],
                       ['Prova', modalityValid],
-                      ['Camiseta', shirtValid],
+                      ...(semCamiseta ? [] : [['Camiseta', shirtValid]]),
                       ['Foto', photoValid],
                       ['Saúde', healthValid],
                     ].map(([label, ok]) => (
@@ -1433,7 +1435,7 @@ export default function PublicForm() {
                     <h4>Opções da Corrida & Equipe</h4>
                     <div className="review-subcard-body">
                       <div className="review-field-inline"><span>Prova:</span> <strong className="text-highlight-green">{selectedModalidadeNome || '-'}</strong></div>
-                      <div className="review-field-inline"><span>Camiseta:</span> <strong>{selectedCamisetaSummary}</strong></div>
+                      {!semCamiseta && <div className="review-field-inline"><span>Camiseta:</span> <strong>{selectedCamisetaSummary}</strong></div>}
                       <div className="review-field-inline"><span>PCD:</span> <strong className={data.pcd ? 'text-highlight-yellow' : ''}>{data.pcd ? 'Sim (50% de desconto)' : 'Não'}</strong></div>
                       <div className="review-field-inline"><span>Servidor Municipal:</span> <strong className={data.servidorPublicoMunicipal ? 'text-highlight-yellow' : ''}>{data.servidorPublicoMunicipal ? 'Sim (Apresentar Contracheque)' : 'Não'}</strong></div>
                       {data.servidorPublicoMunicipal && (

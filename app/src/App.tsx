@@ -90,7 +90,7 @@ function App() {
               {/* Link secreto: mesma pagina de inscricao (PublicForm), direto, sem passar pela
                   checagem de "inscricoes fechadas" nem pelo redirecionamento automatico dos
                   1000 confirmados - uso interno/administrativo pontual, nao divulgar. */}
-              <Route path="/inscricao-vip-504dacf23c94" element={<PublicForm />} />
+              <Route path="/inscricao-vip-504dacf23c94" element={<PublicForm semCamiseta />} />
               <Route path="/inscricao/pagamento/:registrationId" element={<PaymentPage />} />
               <Route path="/inscricao/confirmada/:registrationId" element={<SuccessPaymentPage />} />
               <Route path="/sorteio/:sorteioId" element={<SorteioPublico />} />

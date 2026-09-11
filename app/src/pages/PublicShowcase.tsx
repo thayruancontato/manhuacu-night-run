@@ -8,9 +8,9 @@ import '../App.css';
 // coluna inteira de uma vez - e ao longo do tempo isso passa por TODOS os confirmados,
 // não só uma amostra.
 const SLOTS_POR_COLUNA = 16;
-const SECONDS_PER_CARD = 0.28;
-const ROTACAO_INTERVALO_MS = 1400;
-const FADE_MS = 650;
+const SECONDS_PER_CARD = 1.6;
+const ROTACAO_INTERVALO_MS = 4000;
+const FADE_MS = 900;
 
 // Apoiadores exibidos na faixa lateral - logos brancos (pasta /BRANCOS), feitos pra ficar
 // direto sobre o fundo navy da faixa, sem base branca por trás (um card branco deixaria a

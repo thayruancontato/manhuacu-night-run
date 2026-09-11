@@ -3121,6 +3121,12 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   align-items: stretch;
 }
 
+.single-kit-photo-layout-sem-camiseta {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 340px;
+  margin: 0 auto;
+}
+
 .single-shirt-panel,
 .single-photo-card {
   border: 1px solid rgba(255,255,255,0.08);
@@ -5615,7 +5621,7 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   content-visibility: auto;
   contain-intrinsic-size: 200px 266px;
   opacity: 1;
-  transition: opacity 0.32s ease;
+  transition: opacity 0.45s ease;
 }
 
 /* Troca individual de foto (rotação de slot) - fade-out rápido, PhotoTile troca a imagem no

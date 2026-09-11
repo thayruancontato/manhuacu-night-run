@@ -805,7 +805,18 @@ export default function PublicForm({ semCamiseta = false }: { semCamiseta?: bool
       const paymentProvider: PaymentProvider = selectedProvider === 'cora' ? 'cora' : 'asaas';
       const baseAmount = await calculateBaseAmount();
       const registrationDiscount = applyRegistrationDiscount(baseAmount, userAge, data.categoria === 'adulto' && data.servidorPublicoMunicipal, data.categoria === 'adulto' && data.pcd);
-      const couponDiscount = appliedCoupon ? await consumeCouponForAmount(appliedCoupon.code, registrationDiscount.amount) : null;
+      let couponDiscount: AppliedCoupon | null = null;
+      if (appliedCoupon) {
+        try {
+          couponDiscount = await consumeCouponForAmount(appliedCoupon.code, registrationDiscount.amount);
+        } catch (couponError) {
+          // Se o Firestore estiver fora do ar (ex.: cota diária esgotada), aplica o desconto
+          // já validado localmente em vez de travar a inscrição inteira por causa do cupom.
+          console.error('[PublicForm] Falha ao consumir cupom no Firestore, aplicando desconto sem registrar uso', couponError);
+          const localDiscount = calculateCouponDiscount(registrationDiscount.amount, appliedCoupon.type, appliedCoupon.value);
+          couponDiscount = { ...appliedCoupon, ...localDiscount };
+        }
+      }
       const registrationAmount = couponDiscount?.amountAfterDiscount ?? registrationDiscount.amount;
       // Inscrição gratuita: cupom (ou combinação de descontos) zerou o valor da inscrição.
       // Nesse caso não geramos cobrança em nenhum provedor (Cora/Asaas) e não cobramos taxa de PIX.
@@ -964,34 +975,43 @@ export default function PublicForm({ semCamiseta = false }: { semCamiseta?: bool
       };
       let registrationId: string;
       if (semCamiseta) {
-        // Link secreto/VIP: nunca toca o Firestore - a inscrição inteira (criação, pagamento,
-        // confirmação) fica no Cloudflare (KV do worker), pra não depender da cota diária do
-        // Firestore. serverTimestamp() é um sentinel do SDK do Firestore e não serializa em
-        // JSON puro, então esses dois campos viram data real antes de mandar pro worker.
-        const vipPayload = {
-          ...registrationData,
-          createdAt: new Date().toISOString(),
-          paymentConfirmedAt: isFreeRegistration ? new Date().toISOString() : null,
-        };
-        console.log('[PublicForm] vip:save:start', { asaasPaymentId, invoiceUrl, hasCard: Boolean(euVouCardUrl) });
+        // Link secreto/VIP: tenta salvar do jeito normal (Firestore) primeiro. Só cai pro
+        // Cloudflare (KV do worker) se o Firestore falhar (ex.: cota diária esgotada), pra
+        // não deixar a inscrição travada por causa da cota.
         try {
-          const vipRes = await fetch(`${workerUrl}/vip/registrations`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(vipPayload),
-          });
-          const vipBody = await vipRes.json().catch(() => ({}));
-          if (!vipRes.ok || !vipBody.id) throw new Error(vipBody.error || 'Falha ao salvar no Cloudflare.');
-          registrationId = vipBody.id;
-          console.log('[PublicForm] vip:save:done', { registrationId });
-        } catch (vipError) {
-          // Só se o próprio Cloudflare falhar (bem mais raro que o Firestore) cai pro
-          // WhatsApp manual - mesma saída usada na inscrição escolar.
-          console.error('[PublicForm] VIP save falhou, enviando ficha por WhatsApp', vipError);
-          abrirWhatsAppComFichaVip(registrationData);
-          showAlert('Não deu pra salvar automaticamente agora. Abrimos o WhatsApp com a ficha pronta pra equipe confirmar seu cadastro manualmente.', 'warning');
-          setLoading(false);
-          return;
+          console.log('[PublicForm] firestore:addDoc:start', { asaasPaymentId, invoiceUrl, hasCard: Boolean(euVouCardUrl) });
+          const docRef = await addDoc(collection(db, 'nightrun_registrations'), registrationData);
+          registrationId = docRef.id;
+          console.log('[PublicForm] firestore:addDoc:done', { registrationId });
+        } catch (firestoreError) {
+          console.error('[PublicForm] Firestore falhou ao salvar (link VIP), tentando Cloudflare', firestoreError);
+          // serverTimestamp() é um sentinel do SDK do Firestore e não serializa em JSON puro,
+          // então esses dois campos viram data real antes de mandar pro worker.
+          const vipPayload = {
+            ...registrationData,
+            createdAt: new Date().toISOString(),
+            paymentConfirmedAt: isFreeRegistration ? new Date().toISOString() : null,
+          };
+          console.log('[PublicForm] vip:save:start', { asaasPaymentId, invoiceUrl, hasCard: Boolean(euVouCardUrl) });
+          try {
+            const vipRes = await fetch(`${workerUrl}/vip/registrations`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(vipPayload),
+            });
+            const vipBody = await vipRes.json().catch(() => ({}));
+            if (!vipRes.ok || !vipBody.id) throw new Error(vipBody.error || 'Falha ao salvar no Cloudflare.');
+            registrationId = vipBody.id;
+            console.log('[PublicForm] vip:save:done', { registrationId });
+          } catch (vipError) {
+            // Só se Firestore E Cloudflare falharem cai pro WhatsApp manual - mesma saída
+            // usada na inscrição escolar.
+            console.error('[PublicForm] VIP save falhou (Firestore e Cloudflare), enviando ficha por WhatsApp', vipError);
+            abrirWhatsAppComFichaVip(registrationData);
+            showAlert('Não deu pra salvar automaticamente agora. Abrimos o WhatsApp com a ficha pronta pra equipe confirmar seu cadastro manualmente.', 'warning');
+            setLoading(false);
+            return;
+          }
         }
       } else {
         console.log('[PublicForm] firestore:addDoc:start', { asaasPaymentId, invoiceUrl, hasCard: Boolean(euVouCardUrl) });

@@ -2773,7 +2773,11 @@ async function getRegistrationDocument(env, id) {
   }
   const res = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(id)}?key=${env.FIREBASE_API_KEY}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Firestore GET falhou (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(`Firestore GET falhou (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
   return await res.json();
 }
 
@@ -3097,7 +3101,9 @@ async function confirmRegistrationPaymentById(env, registrationId, ctx, options 
   try {
     document = await getRegistrationDocument(env, registrationId);
   } catch (err) {
-    return { found: false, reason: "firestore_error", error: err.message };
+    // Distingue cota esgotada (fallback write-only no frontend le esse reason) de outros erros.
+    const reason = err.status === 429 ? "quota_exceeded" : "firestore_error";
+    return { found: false, reason, error: err.message };
   }
   if (!document) return { found: false, reason: "registration_not_found" };
   return confirmRegistrationDocument(env, document, ctx, { ...options, manual: true });

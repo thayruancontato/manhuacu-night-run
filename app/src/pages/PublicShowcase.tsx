@@ -44,7 +44,7 @@ const embaralhar = <T,>(lista: T[]): T[] => {
 // em sequência.
 type Slot = { atleta: Atleta; versao: number };
 
-function PhotoTile({ atleta }: { atleta: Atleta }) {
+function PhotoTile({ atleta, slotKey }: { atleta: Atleta; slotKey: string }) {
   const [exibido, setExibido] = useState(atleta);
   const [desvanecendo, setDesvanecendo] = useState(false);
 
@@ -60,7 +60,7 @@ function PhotoTile({ atleta }: { atleta: Atleta }) {
   }, [atleta.id]);
 
   return (
-    <div className={`showcase-card ${desvanecendo ? 'showcase-card-fading' : ''}`}>
+    <div className={`showcase-card ${desvanecendo ? 'showcase-card-fading' : ''}`} data-slot={slotKey}>
       {exibido.fotoUrl ? (
         <img src={exibido.fotoUrl} alt="" decoding="async" />
       ) : (
@@ -152,14 +152,30 @@ export default function PublicShowcase() {
   // Rotação: a cada intervalo, troca UMA posição aleatória (nunca a coluna toda) por outro
   // atleta aleatório do pool completo - com isso, ao longo do tempo, todo mundo passa pela
   // parede, e a troca em si é sempre individual, com fade (PhotoTile cuida da transição).
+  // Só escolhe posições que estão FORA da área visível no momento (via getBoundingClientRect
+  // nos elementos com data-slot), pra quem está olhando nunca ver a foto trocar na frente
+  // dele - a "nova" foto só aparece quando rola naturalmente pra dentro da tela.
   useEffect(() => {
     const interval = setInterval(() => {
       setSlots(prev => {
         if (prev.length === 0) return prev;
         const pool = atletasRef.current;
         if (pool.length === 0) return prev;
-        const colIndex = Math.floor(Math.random() * prev.length);
-        const slotIndex = Math.floor(Math.random() * prev[colIndex].length);
+
+        let colIndex = -1;
+        let slotIndex = -1;
+        for (let tentativa = 0; tentativa < 10; tentativa++) {
+          const c = Math.floor(Math.random() * prev.length);
+          const s = Math.floor(Math.random() * prev[c].length);
+          const els = document.querySelectorAll(`[data-slot="${c}-${s}"]`);
+          const visivel = els.length > 0 && Array.from(els).some(el => {
+            const r = el.getBoundingClientRect();
+            return r.bottom > -40 && r.top < window.innerHeight + 40;
+          });
+          if (!visivel) { colIndex = c; slotIndex = s; break; }
+        }
+        if (colIndex === -1) return prev; // tudo visível agora (tela pequena) - espera o próximo tick
+
         const novoAtleta = pool[Math.floor(Math.random() * pool.length)];
         if (novoAtleta.id === prev[colIndex][slotIndex].atleta.id) return prev;
         const proximo = prev.map(col => col.slice());
@@ -184,7 +200,7 @@ export default function PublicShowcase() {
               style={{ animationDuration: `${duracao}s`, animationDelay: `${-(colIndex * 3.5)}s` }}
             >
               {Array.from({ length: col.length * 2 }, (_, i) => (
-                <PhotoTile key={`${colIndex}-${i}`} atleta={col[i % col.length].atleta} />
+                <PhotoTile key={`${colIndex}-${i}`} slotKey={`${colIndex}-${i % col.length}`} atleta={col[i % col.length].atleta} />
               ))}
             </div>
           );

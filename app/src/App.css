@@ -5618,8 +5618,6 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   aspect-ratio: 3 / 4;
   overflow: hidden;
   flex-shrink: 0;
-  content-visibility: auto;
-  contain-intrinsic-size: 200px 266px;
   opacity: 1;
   transition: opacity 0.45s ease;
 }

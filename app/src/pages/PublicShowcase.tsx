@@ -75,7 +75,7 @@ function PhotoTile({ atleta, slotKey }: { atleta: Atleta; slotKey: string }) {
 
 export default function PublicShowcase() {
   const [atletas, setAtletas] = useState<Atleta[]>([]);
-  const [colunasPorLargura, setColunasPorLargura] = useState(() => calcularColunas());
+  const colunasPorLargura = useRef(calcularColunas()).current;
   const [slots, setSlots] = useState<Slot[][]>([]);
   const atletasRef = useRef<Atleta[]>([]);
 
@@ -109,45 +109,30 @@ export default function PublicShowcase() {
     return () => clearInterval(interval);
   }, []);
 
+  // Monta os slots (posições fixas) só UMA VEZ, na primeira carga de atletas - nunca mais
+  // depois disso, nem se o número de colunas mudar (resize) nem se o pool de atletas mudar
+  // (gente confirmando ao longo do dia). Reconstruir tudo de novo trocaria o conteúdo de
+  // toda a parede de uma vez, sem passar pelo fade individual do PhotoTile - exatamente o
+  // "muda tudo do nada, sem fade" relatado. A partir do primeiro monte, só a rotação abaixo
+  // muda conteúdo, sempre um slot de cada vez.
+  const jaMontadoRef = useRef(false);
   useEffect(() => {
-    // Debounce + só recalcula se a largura realmente mudou de forma relevante - alguns
-    // players/TVs disparam eventos de resize espúrios (troca de overscan, etc.).
-    let larguraAnterior = window.innerWidth;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const onResize = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        if (Math.abs(window.innerWidth - larguraAnterior) < 80) return;
-        larguraAnterior = window.innerWidth;
-        setColunasPorLargura(calcularColunas());
-      }, 800);
+    if (jaMontadoRef.current || atletas.length === 0) return;
+    jaMontadoRef.current = true;
+    const pool = embaralhar(atletas);
+    let ponteiro = 0;
+    const proximo = () => {
+      const atleta = pool[ponteiro % pool.length];
+      ponteiro += 1;
+      return atleta;
     };
-    window.addEventListener('resize', onResize);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, []);
-
-  // Monta os slots (posições fixas) só quando o número de colunas muda ou na primeira carga
-  // de atletas - a partir daí, cada slot muda de conteúdo individualmente pela rotação, nunca
-  // reconstruindo a coluna inteira (o que reiniciaria a rolagem de todo mundo de uma vez).
-  useEffect(() => {
-    if (atletas.length === 0) return;
-    setSlots(prev => {
-      if (prev.length === colunasPorLargura) return prev;
-      const pool = embaralhar(atletas);
-      let ponteiro = 0;
-      const proximo = () => {
-        const atleta = pool[ponteiro % pool.length];
-        ponteiro += 1;
-        return atleta;
-      };
-      return Array.from({ length: colunasPorLargura }, () =>
+    setSlots(
+      Array.from({ length: colunasPorLargura }, () =>
         Array.from({ length: SLOTS_POR_COLUNA }, () => ({ atleta: proximo(), versao: 0 }))
-      );
-    });
-  }, [atletas, colunasPorLargura]);
+      )
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atletas]);
 
   // Rotação: a cada intervalo, troca UMA posição aleatória (nunca a coluna toda) por outro
   // atleta aleatório do pool completo - com isso, ao longo do tempo, todo mundo passa pela

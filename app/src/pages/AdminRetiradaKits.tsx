@@ -90,6 +90,7 @@ export default function AdminRetiradaKits() {
   const [relatorioOcultoVisivel, setRelatorioOcultoVisivel] = useState(false);
   const [mostrarModalRelatorioDiario, setMostrarModalRelatorioDiario] = useState(false);
   const [dataRelatorioDiario, setDataRelatorioDiario] = useState(() => new Date().toISOString().slice(0, 10));
+  const [acessosSiteManual, setAcessosSiteManual] = useState('');
   const [gerandoRelatorioDiario, setGerandoRelatorioDiario] = useState(false);
 
   useEffect(() => {
@@ -651,7 +652,7 @@ export default function AdminRetiradaKits() {
   // por horário, top 3 de quem mais retirou de uma vez, resumo de pendentes e (se
   // configurado) o total de leituras do Firestore no dia via worker (usado como aproximação
   // de acessos ao site, já que o projeto não tem analytics próprio).
-  const gerarRelatorioDiarioPdf = async (dataStr: string) => {
+  const gerarRelatorioDiarioPdf = async (dataStr: string, acessosManual: string) => {
     setGerandoRelatorioDiario(true);
     try {
       const [ano, mes, diaNum] = dataStr.split('-').map(Number);
@@ -712,16 +713,23 @@ export default function AdminRetiradaKits() {
         return a.tamanho.localeCompare(b.tamanho, 'pt-BR', { numeric: true });
       });
 
-      // Acessos ao site (aproximado pelas leituras do Firestore no dia) - opcional, some
-      // silenciosamente se o worker não tiver a credencial do Google Cloud configurada.
+      // Acessos ao site (aproximado pelas leituras do Firestore no dia) - se o admin digitou
+      // um valor manual no modal, usa ele direto (a busca automática pelo Google Cloud ainda
+      // está sendo configurada); senão tenta buscar do worker e, falhando, mostra
+      // "indisponível" em vez de travar o relatório inteiro.
       let acessosSite: number | null = null;
-      try {
-        const workerUrl = import.meta.env.VITE_WORKER_URL;
-        const res = await fetch(`${workerUrl}/analytics/site-visits?date=${dataStr}`);
-        const body = await res.json().catch(() => ({}));
-        if (typeof body.count === 'number') acessosSite = body.count;
-      } catch (e) {
-        console.error('Erro ao buscar acessos ao site:', e);
+      const acessosManualNum = Number(acessosManual);
+      if (acessosManual.trim() !== '' && Number.isFinite(acessosManualNum)) {
+        acessosSite = acessosManualNum;
+      } else {
+        try {
+          const workerUrl = import.meta.env.VITE_WORKER_URL;
+          const res = await fetch(`${workerUrl}/analytics/site-visits?date=${dataStr}`);
+          const body = await res.json().catch(() => ({}));
+          if (typeof body.count === 'number') acessosSite = body.count;
+        } catch (e) {
+          console.error('Erro ao buscar acessos ao site:', e);
+        }
       }
 
       const headerBase64: string = await new Promise((resolve, reject) => {
@@ -1591,7 +1599,18 @@ export default function AdminRetiradaKits() {
               type="date"
               value={dataRelatorioDiario}
               onChange={e => setDataRelatorioDiario(e.target.value)}
-              style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '2px solid #071A45', fontSize: '0.9rem', boxSizing: 'border-box', marginBottom: 20 }}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '2px solid #071A45', fontSize: '0.9rem', boxSizing: 'border-box', marginBottom: 16 }}
+            />
+            <label style={{ fontSize: '0.72rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+              Acessos ao site nesse dia (manual)
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={acessosSiteManual}
+              onChange={e => setAcessosSiteManual(e.target.value)}
+              placeholder="Deixe em branco pra tentar buscar automático"
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '2px solid #cbd5e1', fontSize: '0.9rem', boxSizing: 'border-box', marginBottom: 20 }}
             />
             <div style={{ display: 'flex', gap: 10 }}>
               <button
@@ -1601,7 +1620,7 @@ export default function AdminRetiradaKits() {
                 Cancelar
               </button>
               <button
-                onClick={() => gerarRelatorioDiarioPdf(dataRelatorioDiario)}
+                onClick={() => gerarRelatorioDiarioPdf(dataRelatorioDiario, acessosSiteManual)}
                 disabled={gerandoRelatorioDiario || !dataRelatorioDiario}
                 style={{ flex: 1, padding: '14px', borderRadius: 10, border: 'none', background: '#071A45', color: '#fff', fontWeight: 800, cursor: gerandoRelatorioDiario ? 'wait' : 'pointer' }}
               >

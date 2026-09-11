@@ -107,6 +107,27 @@ export default function AdminInscritos() {
   
   const { showAlert } = useDialog();
 
+  // Inscrições feitas pelo link secreto/VIP não ficam no Firestore (vão direto pro
+  // Cloudflare KV, via worker, pra não depender da cota do Firestore) - buscadas à parte
+  // aqui e mostradas numa seção própria, já que não entram na paginação/filtros do Firestore.
+  const [vipRegistrations, setVipRegistrations] = useState<any[]>([]);
+  const [loadingVip, setLoadingVip] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const workerUrl = import.meta.env.VITE_WORKER_URL;
+        const res = await fetch(`${workerUrl}/vip/registrations`);
+        const body = await res.json().catch(() => ({}));
+        setVipRegistrations(Array.isArray(body.registrations) ? body.registrations : []);
+      } catch (e) {
+        console.error('Erro ao carregar inscrições VIP:', e);
+      } finally {
+        setLoadingVip(false);
+      }
+    })();
+  }, []);
+
   useEffect(() => { loadInitial(); }, []);
   useEffect(() => { fetchKits().then(setKitsCadastrados).catch(e => console.error('Erro ao carregar kits', e)); }, []);
 
@@ -474,6 +495,39 @@ export default function AdminInscritos() {
           </button>
         </div>
       </div>
+
+      {/* Inscrições via link secreto/VIP - vivem no Cloudflare KV, não no Firestore */}
+      {!loadingVip && vipRegistrations.length > 0 && (
+        <div style={{ background: '#fff', borderRadius: 24, border: '1px solid #e2e8f0', padding: '20px 24px', marginBottom: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <GraduationCap size={18} color="#7c3aed" />
+            <strong style={{ fontSize: '0.95rem', color: '#071A45' }}>Inscrições via link VIP ({vipRegistrations.length})</strong>
+            <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 600 }}>· salvas no Cloudflare, não no Firestore</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {vipRegistrations.map(r => (
+              <div key={r.id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+                background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 12, padding: '10px 14px',
+              }}>
+                <div>
+                  <strong style={{ fontSize: '0.85rem', color: '#071A45' }}>{String(r.nome || 'SEM NOME').toUpperCase()}</strong>
+                  <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                    {r.modalidadeNome || '-'} · {r.cpf || '-'} · {r.telefone || '-'}
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: '0.68rem', fontWeight: 800, padding: '4px 10px', borderRadius: 8, textTransform: 'uppercase',
+                  background: r.paymentStatus === 'pago' ? '#dcfce7' : '#fef3c7',
+                  color: r.paymentStatus === 'pago' ? '#166534' : '#92400e',
+                }}>
+                  {r.paymentStatus === 'pago' ? 'Pago' : (r.paymentStatus || 'Pendente')}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stats Quick Row */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 28, flexWrap: 'wrap' }}>

@@ -523,17 +523,16 @@ export default {
       const checkPaymentMatch = path.match(/^\/registrations\/([^/]+)\/check-payment$/);
       if (checkPaymentMatch && request.method === "POST") {
         const registrationId = decodeURIComponent(checkPaymentMatch[1]);
-        
-        // 1. Buscar a inscricao no firestore
-        const docUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(registrationId)}?key=${env.FIREBASE_API_KEY}`;
-        const docRes = await fetch(docUrl);
-        if (docRes.status === 404) return json({ found: false, error: "Inscrição não encontrada." }, 404);
-        if (!docRes.ok) {
-          const errorText = await docRes.text().catch(() => "");
-          return json({ found: false, error: "Erro ao buscar inscrição no Firestore.", details: errorText }, docRes.status);
+
+        // 1. Buscar a inscricao (KV se for ID do link VIP, Firestore caso contrario)
+        let document;
+        try {
+          document = await getRegistrationDocument(env, registrationId);
+        } catch (err) {
+          return json({ found: false, error: "Erro ao buscar inscrição.", details: err.message }, 500);
         }
-        
-        const document = await docRes.json();
+        if (!document) return json({ found: false, error: "Inscrição não encontrada." }, 404);
+
         const fields = document.fields || {};
         const alreadyPaid = fields.paymentStatus?.stringValue === "pago";
         
@@ -586,6 +585,40 @@ export default {
         const registrationId = decodeURIComponent(cardPaymentMatch[1]);
         const result = await createCreditCardPaymentForRegistration(env, registrationId);
         return json(result, result.success ? 200 : 400);
+      }
+
+      // ==================== INSCRICOES VIP (KV, sem Firestore) ====================
+      if (path === "/vip/registrations" && request.method === "POST") {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== "object") return json({ error: "Corpo da requisição inválido." }, 400);
+        const id = `${VIP_ID_PREFIX}${crypto.randomUUID()}`;
+        const fields = jsToFirestoreFields(body);
+        const document = { name: vipDocumentName(id), fields };
+        await env.NIGHTRUN_STORAGE.put(vipRegistrationKvKey(id), JSON.stringify(document));
+        await indexVipPaymentIds(env, id, body);
+        return json({ id });
+      }
+
+      const vipRegMatch = path.match(/^\/vip\/registrations\/([^/]+)$/);
+      if (vipRegMatch && request.method === "GET") {
+        const id = decodeURIComponent(vipRegMatch[1]);
+        const document = await getRegistrationDocument(env, id);
+        if (!document) return json({ found: false, error: "Inscrição não encontrada." }, 404);
+        return json({ found: true, id, ...firestoreDocumentFieldsToJs(document.fields || {}) });
+      }
+
+      if (path === "/vip/registrations" && request.method === "GET") {
+        const listResult = await env.NIGHTRUN_STORAGE.list({ prefix: "vip_registration:" });
+        const registrations = await Promise.all(listResult.keys.map(async k => {
+          const raw = await env.NIGHTRUN_STORAGE.get(k.name);
+          if (!raw) return null;
+          try {
+            const document = JSON.parse(raw);
+            const id = k.name.replace("vip_registration:", "");
+            return { id, ...firestoreDocumentFieldsToJs(document.fields || {}) };
+          } catch { return null; }
+        }));
+        return json({ registrations: registrations.filter(Boolean) });
       }
 
       // ==================== MEDIA (R2) ====================
@@ -2553,12 +2586,8 @@ async function createCreditCardPaymentForRegistration(env, registrationId) {
     return { success: false, error: "Pagamento com cartão de crédito não está disponível no momento." };
   }
 
-  const docUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(registrationId)}?key=${env.FIREBASE_API_KEY}`;
-  const docRes = await fetch(docUrl);
-  if (docRes.status === 404) return { success: false, error: "Inscrição não encontrada." };
-  if (!docRes.ok) return { success: false, error: "Erro ao buscar inscrição." };
-
-  const document = await docRes.json();
+  const document = await getRegistrationDocument(env, registrationId).catch(() => null);
+  if (!document) return { success: false, error: "Inscrição não encontrada." };
   const fields = document.fields || {};
   const existingPaymentId = firestoreString(fields.creditCardAsaasPaymentId);
   const existingInvoiceUrl = firestoreString(fields.creditCardInvoiceUrl);
@@ -2619,12 +2648,7 @@ async function createCreditCardPaymentForRegistration(env, registrationId) {
     creditCardPaymentStatus: { stringValue: payment.status || "PENDING" },
     updatedAt: { timestampValue: new Date().toISOString() }
   };
-  const updateMask = Object.keys(patchFields).map(field => `updateMask.fieldPaths=${encodeURIComponent(field)}`).join("&");
-  await fetch(`https://firestore.googleapis.com/v1/${document.name}?key=${env.FIREBASE_API_KEY}&${updateMask}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: patchFields })
-  });
+  await patchFirestoreDocument(env, document.name, patchFields);
 
   return { success: true, paymentId, invoiceUrl, status: payment.status || "" };
 }
@@ -2699,7 +2723,79 @@ function firestoreTimestamp(value) {
   return value?.timestampValue || "";
 }
 
+// ==================== INSCRICOES VIP (Cloudflare KV, sem Firestore) ====================
+// Link secreto/VIP: pra nao depender da cota diaria de leitura/escrita do Firestore (o
+// mesmo problema que ja affeta as paginas publicas), a inscricao inteira - criacao,
+// pagamento, confirmacao - vive só no KV (env.NIGHTRUN_STORAGE), nunca toca o Firestore.
+// O "documento" e guardado no mesmo formato REST do Firestore ({name, fields: {...}}) so pra
+// poder reaproveitar sem alteracao toda a logica de confirmacao de pagamento ja existente
+// (confirmRegistrationDocument, markRegistrationAsAsaasCreditCard, etc.), que so enxerga
+// esse formato. O "name" de um doc VIP comeca com "vip/" em vez de "projects/..." - e assim
+// que patchFirestoreDocument/getRegistrationDocument reconhecem que devem ir no KV.
+const VIP_ID_PREFIX = "vip_";
+const isVipRegistrationId = (id) => typeof id === "string" && id.startsWith(VIP_ID_PREFIX);
+const vipRegistrationKvKey = (id) => `vip_registration:${id}`;
+const vipPaymentIndexKvKey = (paymentId) => `vip_payment_index:${paymentId}`;
+const vipDocumentName = (id) => `vip/nightrun_registrations/${id}`;
+
+function jsToFirestoreValue(value) {
+  if (value === null || value === undefined) return { nullValue: null };
+  if (typeof value === "string") return { stringValue: value };
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number") return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map(jsToFirestoreValue) } };
+  if (typeof value === "object") return { mapValue: { fields: jsToFirestoreFields(value) } };
+  return { stringValue: String(value) };
+}
+function jsToFirestoreFields(obj) {
+  const fields = {};
+  for (const [key, value] of Object.entries(obj || {})) {
+    if (value === undefined) continue;
+    // Campos tipo serverTimestamp() do SDK do Firestore nao existem aqui (isso e o worker,
+    // sem SDK) - o cliente (PublicForm.tsx) manda ISO string pronta pra esses campos quando
+    // o destino e o link VIP.
+    fields[key] = jsToFirestoreValue(value);
+  }
+  return fields;
+}
+// Decodificacao (Firestore-shape -> JS puro) ja existe mais acima como
+// firestoreValueToJs/firestoreDocumentFieldsToJs - reaproveitadas aqui, nao duplicadas.
+
+// Le um "documento" de inscricao por ID, do KV se for um ID VIP ou do Firestore caso
+// contrario - ponto unico usado pelos fluxos de pagamento (check-payment, cartao de
+// credito, confirmacao manual) pra funcionar igual nos dois storages.
+async function getRegistrationDocument(env, id) {
+  if (isVipRegistrationId(id)) {
+    const raw = await env.NIGHTRUN_STORAGE.get(vipRegistrationKvKey(id));
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+  const res = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(id)}?key=${env.FIREBASE_API_KEY}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Firestore GET falhou (${res.status})`);
+  return await res.json();
+}
+
+// Indice reverso pagamento->inscricao pro webhook do Asaas/Cora conseguir achar uma
+// inscricao VIP pelo ID do pagamento (o KV nao tem "query por campo" como o Firestore).
+async function indexVipPaymentIds(env, id, fieldsPlain) {
+  const candidatos = [fieldsPlain.asaasPaymentId, fieldsPlain.creditCardAsaasPaymentId, fieldsPlain.coraInvoiceId, fieldsPlain.coraInvoiceCode, fieldsPlain.paymentExternalId]
+    .filter(Boolean);
+  await Promise.all(candidatos.map(paymentId => env.NIGHTRUN_STORAGE.put(vipPaymentIndexKvKey(paymentId), id)));
+}
+
 async function patchFirestoreDocument(env, documentName, patchFields) {
+  if (typeof documentName === "string" && documentName.startsWith("vip/")) {
+    const id = documentName.split("/").pop();
+    const key = vipRegistrationKvKey(id);
+    const raw = await env.NIGHTRUN_STORAGE.get(key);
+    const doc = raw ? JSON.parse(raw) : { name: documentName, fields: {} };
+    doc.fields = { ...doc.fields, ...patchFields };
+    await env.NIGHTRUN_STORAGE.put(key, JSON.stringify(doc));
+    await indexVipPaymentIds(env, id, firestoreDocumentFieldsToJs(patchFields));
+    return { ok: true, status: 200, body: doc };
+  }
   const updateMask = Object.keys(patchFields).map(field => `updateMask.fieldPaths=${encodeURIComponent(field)}`).join("&");
   const res = await fetch(`https://firestore.googleapis.com/v1/${documentName}?key=${env.FIREBASE_API_KEY}&${updateMask}`, {
     method: "PATCH",
@@ -2711,6 +2807,14 @@ async function patchFirestoreDocument(env, documentName, patchFields) {
 }
 
 async function findRegistrationByPaymentId(env, paymentId, searchFields = ["asaasPaymentId"]) {
+  // Inscricoes VIP vivem no KV, sem query por campo possivel - o indice reverso (gravado na
+  // criacao/pagamento com cartao) resolve isso com uma unica leitura de KV.
+  const vipId = await env.NIGHTRUN_STORAGE.get(vipPaymentIndexKvKey(paymentId));
+  if (vipId) {
+    const document = await getRegistrationDocument(env, vipId);
+    if (document) return { document, matchedField: "vip", status: 200 };
+  }
+
   const searchUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery?key=${env.FIREBASE_API_KEY}`;
   for (const fieldPath of searchFields) {
     const queryBody = {
@@ -2989,17 +3093,13 @@ async function confirmRegistrationPaymentWriteOnly(env, registrationId, ctx, opt
 
 async function confirmRegistrationPaymentById(env, registrationId, ctx, options = {}) {
   console.log("[Manual Payment Confirm] Start", { registrationId, options });
-  const docUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/nightrun_registrations/${encodeURIComponent(registrationId)}?key=${env.FIREBASE_API_KEY}`;
-  const docRes = await fetch(docUrl);
-  if (docRes.status === 404) return { found: false, reason: "registration_not_found" };
-  if (docRes.status === 429) {
-    return { found: false, reason: "quota_exceeded", status: docRes.status };
+  let document;
+  try {
+    document = await getRegistrationDocument(env, registrationId);
+  } catch (err) {
+    return { found: false, reason: "firestore_error", error: err.message };
   }
-  if (!docRes.ok) {
-    const errorText = await docRes.text().catch(() => "");
-    return { found: false, reason: "firestore_error", status: docRes.status, error: errorText };
-  }
-  const document = await docRes.json();
+  if (!document) return { found: false, reason: "registration_not_found" };
   return confirmRegistrationDocument(env, document, ctx, { ...options, manual: true });
 }
 
@@ -3088,34 +3188,25 @@ async function confirmRegistrationDocument(env, document, ctx, options = {}) {
   }
 
   if (!alreadyPaid) {
-    const maskFields = ["paymentStatus"];
     const patchFields = { paymentStatus: { stringValue: "pago" } };
     // Numero de inscricao (8 digitos, sorteado) exibido com destaque no acesso do atleta -
     // gerado so na primeira confirmacao de cada registro (chance de colisao com ~1000
     // inscritos num espaco de 100 milhoes de numeros e desprezivel, sem precisar de uma
     // consulta extra por confirmacao so pra checar unicidade).
     if (!fields.numeroInscricao?.stringValue) {
-      maskFields.push("numeroInscricao");
       patchFields.numeroInscricao = { stringValue: String(Math.floor(10000000 + Math.random() * 90000000)) };
     }
     if (options.manual) {
-      maskFields.push("updatedAt", "manualPaymentConfirmedAt");
       const now = new Date().toISOString();
       patchFields.updatedAt = { timestampValue: now };
       patchFields.manualPaymentConfirmedAt = { timestampValue: now };
     }
     if (options.markGhost) {
-      maskFields.push("pendenciaFantasma", "pendenciaFantasmaDetectadaEm");
       patchFields.pendenciaFantasma = { booleanValue: true };
       patchFields.pendenciaFantasmaDetectadaEm = { timestampValue: new Date().toISOString() };
     }
-    const updateMask = maskFields.map(f => `updateMask.fieldPaths=${f}`).join("&");
-    const patchRes = await fetch(`https://firestore.googleapis.com/v1/${document.name}?key=${env.FIREBASE_API_KEY}&${updateMask}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: patchFields })
-    });
-    console.log("[Payment Confirm] Firestore patch", { registrationId, status: patchRes.status, ok: patchRes.ok });
+    const patchResult = await patchFirestoreDocument(env, document.name, patchFields);
+    console.log("[Payment Confirm] Storage patch", { registrationId, ok: patchResult.ok, status: patchResult.status });
 
     // Conta atomicamente essa confirmacao pro limite de 1000 - dispara o aviso automatico
     // (WhatsApp + PDF pros numeros configurados) na hora exata em que o contador cruza 1000.

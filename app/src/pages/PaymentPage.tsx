@@ -65,9 +65,43 @@ export default function PaymentPage() {
     });
   };
 
+  // Inscrições do link secreto/VIP não existem no Firestore (ficam só no Cloudflare KV, via
+  // worker) - identificadas pelo prefixo "vip_" no ID. Como KV não tem listener em tempo real
+  // como o onSnapshot, essas usam polling contra o worker em vez do Firestore.
+  const isVipRegistration = Boolean(registrationId?.startsWith('vip_'));
+
   useEffect(() => {
+    if (!registrationId || !isVipRegistration) return;
+    const workerUrl = import.meta.env.VITE_WORKER_URL;
+    let cancelado = false;
+    const buscar = async (isPrimeira: boolean) => {
+      try {
+        const res = await fetch(`${workerUrl}/vip/registrations/${registrationId}`);
+        const body = await res.json().catch(() => ({}));
+        if (cancelado) return;
+        if (!res.ok || !body.found) {
+          if (isPrimeira) {
+            showAlert('Inscrição não encontrada.', 'error');
+            navigate('/');
+          }
+          return;
+        }
+        setData(body);
+        setLoading(false);
+        if (body.paymentStatus === 'pago') navigate(`/inscricao/confirmada/${registrationId}`);
+      } catch (err) {
+        console.error('Erro ao buscar inscrição VIP:', err);
+        if (isPrimeira) showAlert('Erro ao carregar dados de pagamento.', 'error');
+      }
+    };
+    buscar(true);
+    const interval = setInterval(() => buscar(false), 4000);
+    return () => { cancelado = true; clearInterval(interval); };
+  }, [registrationId, isVipRegistration, navigate, showAlert]);
+
+  useEffect(() => {
+    if (!registrationId || isVipRegistration) return;
     const fetchRegistration = async () => {
-      if (!registrationId) return;
       try {
         const docRef = doc(db, 'nightrun_registrations', registrationId);
         const docSnap = await getDoc(docRef);
@@ -90,10 +124,10 @@ export default function PaymentPage() {
     };
 
     fetchRegistration();
-  }, [registrationId]);
+  }, [registrationId, isVipRegistration]);
 
   useEffect(() => {
-    if (!registrationId) return;
+    if (!registrationId || isVipRegistration) return;
     const docRef = doc(db, 'nightrun_registrations', registrationId);
     return onSnapshot(docRef, snapshot => {
       if (!snapshot.exists()) return;
@@ -104,7 +138,7 @@ export default function PaymentPage() {
         navigate(`/inscricao/confirmada/${registrationId}`);
       }
     });
-  }, [registrationId, navigate]);
+  }, [registrationId, isVipRegistration, navigate]);
 
   const handleCopyPix = () => {
     if (data.pixPayload || data.asaasPaymentId) {

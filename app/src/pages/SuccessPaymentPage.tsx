@@ -15,9 +15,27 @@ export default function SuccessPaymentPage() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
+  // Inscrições do link secreto/VIP não existem no Firestore - ficam só no Cloudflare KV,
+  // buscadas pelo worker (sem listener em tempo real, então é uma leitura única aqui).
   useEffect(() => {
     if (!registrationId) return;
-    
+    if (registrationId.startsWith('vip_')) {
+      (async () => {
+        try {
+          const workerUrl = import.meta.env.VITE_WORKER_URL;
+          const res = await fetch(`${workerUrl}/vip/registrations/${registrationId}`);
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || !body.found) { navigate('/'); return; }
+          setData(body);
+        } catch (err) {
+          console.error('Erro ao buscar inscrição VIP:', err);
+        } finally {
+          setLoading(false);
+        }
+      })();
+      return;
+    }
+
     const docRef = doc(db, 'nightrun_registrations', registrationId);
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {

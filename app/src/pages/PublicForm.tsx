@@ -962,27 +962,45 @@ export default function PublicForm({ semCamiseta = false }: { semCamiseta?: bool
         idadeNoCadastro: userAge,
         createdAt: serverTimestamp(),
       };
-      console.log('[PublicForm] firestore:addDoc:start', { asaasPaymentId, invoiceUrl, hasCard: Boolean(euVouCardUrl) });
-      let docRef: Awaited<ReturnType<typeof addDoc>>;
-      try {
-        docRef = await addDoc(collection(db, 'nightrun_registrations'), registrationData);
-      } catch (firestoreError) {
-        // Link secreto/VIP: se não conseguir gravar (ex: cota do Firestore esgotada), em vez
-        // de travar a inscrição, manda a ficha pronta pro WhatsApp da equipe cadastrar por
-        // fora - mesma saída usada na inscrição escolar. O fluxo normal (/inscricao) não
-        // muda em nada: continua propagando o erro pra tela normal de erro.
-        if (semCamiseta) {
-          console.error('[PublicForm] VIP addDoc falhou, enviando ficha por WhatsApp', firestoreError);
+      let registrationId: string;
+      if (semCamiseta) {
+        // Link secreto/VIP: nunca toca o Firestore - a inscrição inteira (criação, pagamento,
+        // confirmação) fica no Cloudflare (KV do worker), pra não depender da cota diária do
+        // Firestore. serverTimestamp() é um sentinel do SDK do Firestore e não serializa em
+        // JSON puro, então esses dois campos viram data real antes de mandar pro worker.
+        const vipPayload = {
+          ...registrationData,
+          createdAt: new Date().toISOString(),
+          paymentConfirmedAt: isFreeRegistration ? new Date().toISOString() : null,
+        };
+        console.log('[PublicForm] vip:save:start', { asaasPaymentId, invoiceUrl, hasCard: Boolean(euVouCardUrl) });
+        try {
+          const vipRes = await fetch(`${workerUrl}/vip/registrations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(vipPayload),
+          });
+          const vipBody = await vipRes.json().catch(() => ({}));
+          if (!vipRes.ok || !vipBody.id) throw new Error(vipBody.error || 'Falha ao salvar no Cloudflare.');
+          registrationId = vipBody.id;
+          console.log('[PublicForm] vip:save:done', { registrationId });
+        } catch (vipError) {
+          // Só se o próprio Cloudflare falhar (bem mais raro que o Firestore) cai pro
+          // WhatsApp manual - mesma saída usada na inscrição escolar.
+          console.error('[PublicForm] VIP save falhou, enviando ficha por WhatsApp', vipError);
           abrirWhatsAppComFichaVip(registrationData);
           showAlert('Não deu pra salvar automaticamente agora. Abrimos o WhatsApp com a ficha pronta pra equipe confirmar seu cadastro manualmente.', 'warning');
           setLoading(false);
           return;
         }
-        throw firestoreError;
+      } else {
+        console.log('[PublicForm] firestore:addDoc:start', { asaasPaymentId, invoiceUrl, hasCard: Boolean(euVouCardUrl) });
+        const docRef = await addDoc(collection(db, 'nightrun_registrations'), registrationData);
+        registrationId = docRef.id;
+        console.log('[PublicForm] firestore:addDoc:done', { registrationId });
       }
-      console.log('[PublicForm] firestore:addDoc:done', { registrationId: docRef.id });
 
-      const paymentPageUrl = `https://night-run-uba.web.app/inscricao/pagamento/${docRef.id}`;
+      const paymentPageUrl = `https://night-run-uba.web.app/inscricao/pagamento/${registrationId}`;
       const whatsappSettingsSnap = await getDoc(doc(db, 'nightrun_settings', 'whatsapp_registration_notice'));
       const whatsappSettings = whatsappSettingsSnap.exists() ? whatsappSettingsSnap.data() : {};
       const noticePhone = whatsappSettings.registrationNoticePhone || '';
@@ -1006,7 +1024,7 @@ export default function PublicForm({ semCamiseta = false }: { semCamiseta?: bool
           text: noticeText,
           type: 'registration_notice',
           alunoNome: registrationData.nome,
-          registrationId: docRef.id,
+          registrationId,
           instanceName: singleInstanceName || undefined,
         };
         const noticeRes = await fetch(`${workerUrl}/whatsapp/send`, {
@@ -1029,7 +1047,7 @@ export default function PublicForm({ semCamiseta = false }: { semCamiseta?: bool
         }
       }
 
-      navigate(isFreeRegistration ? `/inscricao/confirmada/${docRef.id}` : `/inscricao/pagamento/${docRef.id}`);
+      navigate(isFreeRegistration ? `/inscricao/confirmada/${registrationId}` : `/inscricao/pagamento/${registrationId}`);
     } catch (error: any) {
       console.error('[PublicForm] submit:error', error);
       showAlert(getFriendlyErrorMessage(error, error.message || 'Erro ao finalizar inscrição.'), 'error');

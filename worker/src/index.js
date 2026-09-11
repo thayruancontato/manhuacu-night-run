@@ -3592,6 +3592,7 @@ async function getCachedConfirmedRoster(env, { forceRefresh = false } = {}) {
         kitRetiradoEm: f.kitRetiradoEm?.timestampValue || null,
         kitRetiradoPor: f.kitRetiradoPor?.stringValue || "",
         kitSeparadoPara: f.kitSeparadoPara?.stringValue || "",
+        tagEscolar: f.tagEscolar?.booleanValue || false,
       };
     })
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));

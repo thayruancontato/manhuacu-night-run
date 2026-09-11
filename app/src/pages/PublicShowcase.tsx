@@ -47,34 +47,52 @@ const embaralhar = <T,>(lista: T[]): T[] => {
 export default function PublicShowcase() {
   const [atletas, setAtletas] = useState<Atleta[]>([]);
   const [colunasPorLargura, setColunasPorLargura] = useState(() => calcularColunas());
+  // Captura o total de confirmados só na PRIMEIRA carga, pra calcular o número de colunas
+  // uma única vez - se recalculasse toda vez que mais gente confirma (atletas.length
+  // crescendo ao longo do dia), de vez em quando o número de colunas mudaria de patamar e
+  // redistribuiria TODO mundo de novo (o corte brusco que a rolagem "some fora da tela, nova
+  // adicionada" deveria evitar). Mais gente confirmando depois só deixa as colunas mais
+  // fundas, nunca precisa de menos.
+  const totalInicialRef = useRef(0);
   // Nunca deixa a tela ter colunas de menos gente demais - se a largura permitiria mais
   // colunas do que o total de confirmados sustenta com boa profundidade, usa menos colunas
   // (mais largas) em vez de mais colunas finas repetindo rápido.
-  const numColunas = atletas.length > 0
-    ? Math.max(1, Math.min(colunasPorLargura, Math.floor(atletas.length / MIN_UNICOS_POR_COLUNA) || 1))
+  const numColunas = totalInicialRef.current > 0
+    ? Math.max(1, Math.min(colunasPorLargura, Math.floor(totalInicialRef.current / MIN_UNICOS_POR_COLUNA) || 1))
     : colunasPorLargura;
-  // Assinatura do conjunto atual (ids ordenados) - usada pra NUNCA re-renderizar a parede
-  // quando o roster busca de novo e volta com o mesmo conteúdo de antes. Trocar o array de
-  // atletas por um nulo (mesmo que com os mesmos dados) reconstrói as colunas do zero e a
-  // animação CSS reinicia do começo em todo mundo ao mesmo tempo - o "quebra e reinicia"
-  // relatado. Só atualiza o estado quando o conjunto de fato mudou (alguém novo confirmou).
-  const assinaturaAtualRef = useRef('');
 
   useEffect(() => {
     const workerUrl = import.meta.env.VITE_WORKER_URL;
+    // Nunca troca a lista inteira (nem re-embaralha) numa atualização - isso descartaria o
+    // arranjo em tela e todo mundo saltaria de posição de uma vez. Quem já está na lista
+    // mantém exatamente a mesma posição; só quem confirmou de novo entra, embaralhado, no
+    // final de cada coluna (novo conteúdo entra por baixo/por cima da tela, sem cortar a
+    // rolagem de quem já estava passando).
     const carregarRoster = async () => {
       try {
         const res = await fetch(`${workerUrl}/roster/confirmed`);
         const data = await res.json();
-        const lista: Atleta[] = (data.athletes || []).map((a: any) => ({
-          id: a.id,
-          nome: a.nome || '',
-          fotoUrl: a.fotoUrl || '',
-        }));
-        const assinatura = lista.map(a => a.id).sort().join(',');
-        if (assinatura === assinaturaAtualRef.current) return;
-        assinaturaAtualRef.current = assinatura;
-        setAtletas(embaralhar(lista));
+        // Inscrições escolares (cortesia pras escolas municipais) não devem aparecer no
+        // telão do evento.
+        const lista: Atleta[] = (data.athletes || [])
+          .filter((a: any) => !a.tagEscolar)
+          .map((a: any) => ({
+            id: a.id,
+            nome: a.nome || '',
+            fotoUrl: a.fotoUrl || '',
+          }));
+        setAtletas(atual => {
+          if (atual.length === 0) {
+            totalInicialRef.current = lista.length;
+            return embaralhar(lista);
+          }
+          const idsNovaLista = new Set(lista.map(a => a.id));
+          const mantidos = atual.filter(a => idsNovaLista.has(a.id));
+          const idsMantidos = new Set(mantidos.map(a => a.id));
+          const novos = lista.filter(a => !idsMantidos.has(a.id));
+          if (novos.length === 0 && mantidos.length === atual.length) return atual;
+          return [...mantidos, ...embaralhar(novos)];
+        });
       } catch (e) {
         console.error('Erro ao buscar confirmados para o showcase:', e);
       }
@@ -82,9 +100,11 @@ export default function PublicShowcase() {
 
     carregarRoster();
     // Recarrega periodicamente - o telão fica ligado o evento inteiro, então precisa pegar
-    // gente que confirmou depois que a página abriu. O endpoint já é cacheado (KV, não
-    // Firestore), então isso não pesa no banco mesmo rodando o dia inteiro.
-    const interval = setInterval(carregarRoster, 10 * 60 * 1000);
+    // gente que confirmou depois que a página abriu. Agora que a atualização só ACRESCENTA
+    // gente nova sem mexer em quem já está na tela, pode ser mais frequente sem risco de
+    // corte brusco. O endpoint já é cacheado (KV, não Firestore), então isso não pesa no
+    // banco mesmo rodando o dia inteiro.
+    const interval = setInterval(carregarRoster, 3 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 

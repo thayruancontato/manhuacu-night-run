@@ -5632,6 +5632,30 @@ input[type="radio"], input[type="checkbox"] { display:none; }
   white-space: nowrap;
 }
 
+.showcase-logo-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.showcase-logo-backdrop {
+  position: absolute;
+  width: min(70vw, 900px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(15,21,53,0.92) 0%, rgba(15,21,53,0.75) 45%, rgba(15,21,53,0) 72%);
+}
+
+.showcase-logo {
+  position: relative;
+  width: min(32vw, 420px);
+  filter: drop-shadow(0 0 30px rgba(0,0,0,0.5));
+}
+
 .sold-out-check {
   color: var(--accent);
   filter: drop-shadow(0 0 10px rgba(107,255,42,0.5));

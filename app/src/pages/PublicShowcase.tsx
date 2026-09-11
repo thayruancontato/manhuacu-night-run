@@ -3,12 +3,12 @@ import '../App.css';
 
 // Parede de fotos em loop infinito pra telão do evento - mesmo efeito visual da tela
 // "Inscrições esgotadas" (SoldOutScreen.tsx: colunas alternando pra cima/baixo, foto
-// duplicada pra fechar o loop sem emenda visível), mas sem nenhum outro elemento na tela
-// (sem logo/texto/CTA) e cobrindo TODOS os confirmados, não só uma amostra de 60.
+// duplicada pra fechar o loop sem emenda visível), com a logo pulsando no centro por cima
+// e cobrindo TODOS os confirmados, não só uma amostra de 60.
 const MIN_CARDS_PER_COLUMN = 14;
 // Segundos de loop por card - controla a velocidade (mais cards por coluna = loop mais
 // longo, senão a rolagem ficaria cada vez mais rápida quanto mais gente se inscrever).
-const SECONDS_PER_CARD = 2.6;
+const SECONDS_PER_CARD = 0.55;
 
 type Atleta = { id: string; fotoUrl: string; nome: string };
 
@@ -78,7 +78,7 @@ export default function PublicShowcase() {
   return (
     <div className="showcase-root">
       {colunas.map((col, colIndex) => {
-        const duracao = Math.max(18, col.length * SECONDS_PER_CARD);
+        const duracao = Math.max(5, col.length * SECONDS_PER_CARD);
         return (
           <div
             key={colIndex}
@@ -100,6 +100,11 @@ export default function PublicShowcase() {
           </div>
         );
       })}
+
+      <div className="showcase-logo-overlay">
+        <div className="showcase-logo-backdrop" />
+        <img src="/LOGO NIGHT RUN SEM FUNDO (em amarelo).png" alt="MCU Night Run" className="showcase-logo" />
+      </div>
     </div>
   );
 }

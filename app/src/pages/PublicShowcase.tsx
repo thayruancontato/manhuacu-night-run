@@ -191,7 +191,15 @@ export default function PublicShowcase() {
         filaRef.current.push(...adiados);
         if (colIndex === -1) return prev; // tudo visível agora (tela pequena) - espera o próximo tick
 
-        const novoAtleta = pool[Math.floor(Math.random() * pool.length)];
+        // Nunca repete alguém que já está em outra posição da parede nesse momento - só
+        // sorteia entre quem ainda não aparece em lugar nenhum agora. Só recai no pool
+        // inteiro no caso extremo de ter mais posições na parede do que atletas confirmados
+        // (aí repetir é matematicamente inevitável).
+        const idsNaParede = new Set<string>();
+        prev.forEach(col => col.forEach(s => idsNaParede.add(s.atleta.id)));
+        const candidatos = pool.filter(a => !idsNaParede.has(a.id));
+        const poolSorteio = candidatos.length > 0 ? candidatos : pool;
+        const novoAtleta = poolSorteio[Math.floor(Math.random() * poolSorteio.length)];
         if (novoAtleta.id === prev[colIndex][slotIndex].atleta.id) return prev;
         const proximo = prev.map(col => col.slice());
         proximo[colIndex][slotIndex] = { atleta: novoAtleta, versao: prev[colIndex][slotIndex].versao + 1 };

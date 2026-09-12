@@ -10,6 +10,7 @@ import { AdminPageSkeleton } from '../components/Skeleton';
 import PlanilhaGeradorTab from '../components/AdminModalidades/PlanilhaGeradorTab';
 import { fetchKits, resolveKitNome, DEFAULT_KIT_ID, type KitRecord } from '../utils/kitsUtils';
 import { getCamisetaShortLabel } from '../utils/camisetaUtils';
+import { exportToCSV } from '../utils/exportUtils';
 import '../styles/admin.css';
 
 const CHILD_RACE_PRESETS = [
@@ -115,6 +116,7 @@ export default function AdminModalidades() {
         .filter(r => kitFilterIds === null || kitFilterIds.includes(r.kit || DEFAULT_KIT_ID))
         .map(r => ({
           nome: String(r.nome || 'Sem nome'),
+          cidade: String(r.endereco?.cidade || '-'),
           camiseta: resolveCamisetaLabel(camisetas, r.tamanhoCamiseta),
           kit: resolveKitNome(kits, r.kit, 'Kit Único'),
         }))
@@ -180,9 +182,11 @@ export default function AdminModalidades() {
       // de comprovante físico de entrega.
       const colAssinaturaW = 34;
       const colRestante = usableW - colAssinaturaW;
-      const colNomeW = colRestante * 0.42;
-      const colCamisetaW = colRestante * 0.32;
-      const colCamisetaX = marginX + colAssinaturaW + colNomeW;
+      const colNomeW = colRestante * 0.34;
+      const colCidadeW = colRestante * 0.2;
+      const colCamisetaW = colRestante * 0.24;
+      const colCidadeX = marginX + colAssinaturaW + colNomeW;
+      const colCamisetaX = colCidadeX + colCidadeW;
       const colKitX = colCamisetaX + colCamisetaW;
       const rowLineH = 5.4;
       const rowPaddingV = 3.4;
@@ -197,6 +201,7 @@ export default function AdminModalidades() {
         docPdf.setTextColor(255, 255, 255);
         docPdf.text('ASSINATURA', marginX + 3, y + 6.2);
         docPdf.text('NOME', marginX + colAssinaturaW + 3, y + 6.2);
+        docPdf.text('CIDADE', colCidadeX + 3, y + 6.2);
         docPdf.text('CAMISETA', colCamisetaX + 3, y + 6.2);
         docPdf.text('KIT', colKitX + 3, y + 6.2);
         y += 9;
@@ -252,13 +257,16 @@ export default function AdminModalidades() {
         docPdf.setDrawColor(226, 232, 240);
         docPdf.setLineWidth(0.2);
         docPdf.line(marginX + colAssinaturaW, y, marginX + colAssinaturaW, y + rowH);
+        docPdf.line(colCidadeX, y, colCidadeX, y + rowH);
         docPdf.line(colCamisetaX, y, colCamisetaX, y + rowH);
         docPdf.line(colKitX, y, colKitX, y + rowH);
 
         docPdf.setFont('helvetica', 'normal');
         docPdf.setFontSize(9.5);
         docPdf.setTextColor(...NAVY_PDF);
+        const cidadeLine = docPdf.splitTextToSize(item.cidade || '-', colCidadeW - 6)[0];
         docPdf.text(nomeLines, marginX + colAssinaturaW + 3, y + rowLineH - 0.8);
+        docPdf.text(cidadeLine, colCidadeX + 3, y + rowLineH - 0.8);
         docPdf.text(item.camiseta || '-', colCamisetaX + 3, y + rowLineH - 0.8);
         docPdf.text(item.kit, colKitX + 3, y + rowLineH - 0.8);
 
@@ -271,6 +279,42 @@ export default function AdminModalidades() {
     } catch (e) {
       console.error(e);
       if (!silent) showAlert('Erro ao gerar o PDF de confirmados.', 'error');
+      throw e;
+    }
+  };
+
+  // Mesmos dados do PDF de confirmados por modalidade (busca direto do Firestore no
+  // momento de exportar, mesmo filtro de kit/status), só que em CSV (abre no Excel) em vez
+  // de PDF - pra quem prefere trabalhar a lista numa planilha.
+  const exportModalidadeCSV = async (mod: Modalidade, options: { kitFilterIds?: string[] | null; silent?: boolean } = {}) => {
+    const { kitFilterIds = null, silent = false } = options;
+    try {
+      const [kits, camisetasSnap] = await Promise.all([fetchKits(), getDocs(collection(db, 'nightrun_camisetas'))]);
+      const camisetas = camisetasSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const snap = await getDocs(query(collection(db, 'nightrun_registrations'), where('modalidadeId', '==', mod.id)));
+      const confirmados = snap.docs
+        .map(d => d.data())
+        .filter(r => r.paymentStatus === 'pago' || r.kitConfirmado || r.contractStatus === 'confirmado')
+        .filter(r => kitFilterIds === null || kitFilterIds.includes(r.kit || DEFAULT_KIT_ID))
+        .map(r => ({
+          nome: String(r.nome || 'Sem nome'),
+          cidade: String(r.endereco?.cidade || '-'),
+          camiseta: resolveCamisetaLabel(camisetas, r.tamanhoCamiseta),
+          kit: resolveKitNome(kits, r.kit, 'Kit Único'),
+        }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+
+      const safeName = String(mod.nome || 'modalidade').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      exportToCSV(confirmados, `confirmados-${safeName}`, [
+        { header: 'Nome', key: 'nome' },
+        { header: 'Cidade', key: 'cidade' },
+        { header: 'Camiseta', key: 'camiseta' },
+        { header: 'Kit', key: 'kit' },
+      ]);
+      if (!silent) showAlert('Planilha gerada com sucesso.', 'success');
+    } catch (e) {
+      console.error(e);
+      if (!silent) showAlert('Erro ao gerar a planilha de confirmados.', 'error');
       throw e;
     }
   };
@@ -302,6 +346,7 @@ export default function AdminModalidades() {
         .filter(r => kitFilterIds === null || kitFilterIds.includes(r.kit || DEFAULT_KIT_ID))
         .map(r => ({
           nome: String(r.nome || 'Sem nome'),
+          cidade: String(r.endereco?.cidade || '-'),
           modalidade: modalidadeNomeById[r.modalidadeId] || '',
           camiseta: resolveCamisetaLabel(camisetas, r.tamanhoCamiseta),
           kit: resolveKitNome(kits, r.kit, 'Kit Único'),
@@ -368,11 +413,13 @@ export default function AdminModalidades() {
       // individual, pra servir de comprovante físico de entrega do kit.
       const colAssinaturaW = 32;
       const colRestante = usableW - colAssinaturaW;
-      const colNomeW = colRestante * 0.32;
-      const colModalidadeW = colRestante * 0.22;
-      const colCamisetaW = colRestante * 0.22;
+      const colNomeW = colRestante * 0.26;
+      const colModalidadeW = colRestante * 0.18;
+      const colCidadeW = colRestante * 0.18;
+      const colCamisetaW = colRestante * 0.19;
       const colModalidadeX = marginX + colAssinaturaW + colNomeW;
-      const colCamisetaX = colModalidadeX + colModalidadeW;
+      const colCidadeX = colModalidadeX + colModalidadeW;
+      const colCamisetaX = colCidadeX + colCidadeW;
       const colKitX = colCamisetaX + colCamisetaW;
       const rowLineH = 5.4;
       const rowPaddingV = 3.4;
@@ -388,6 +435,7 @@ export default function AdminModalidades() {
         docPdf.text('ASSINATURA', marginX + 3, y + 6.2);
         docPdf.text('NOME', marginX + colAssinaturaW + 3, y + 6.2);
         docPdf.text('MODALIDADE', colModalidadeX + 3, y + 6.2);
+        docPdf.text('CIDADE', colCidadeX + 3, y + 6.2);
         docPdf.text('CAMISETA', colCamisetaX + 3, y + 6.2);
         docPdf.text('KIT', colKitX + 3, y + 6.2);
         y += 9;
@@ -442,14 +490,18 @@ export default function AdminModalidades() {
         docPdf.setLineWidth(0.2);
         docPdf.line(marginX + colAssinaturaW, y, marginX + colAssinaturaW, y + rowH);
         docPdf.line(colModalidadeX, y, colModalidadeX, y + rowH);
+        docPdf.line(colCidadeX, y, colCidadeX, y + rowH);
         docPdf.line(colCamisetaX, y, colCamisetaX, y + rowH);
         docPdf.line(colKitX, y, colKitX, y + rowH);
 
         docPdf.setFont('helvetica', 'normal');
         docPdf.setFontSize(9.5);
         docPdf.setTextColor(...NAVY_PDF);
+        const modalidadeLine = docPdf.splitTextToSize(item.modalidade, colModalidadeW - 6)[0];
+        const cidadeLine = docPdf.splitTextToSize(item.cidade || '-', colCidadeW - 6)[0];
         docPdf.text(nomeLines, marginX + colAssinaturaW + 3, y + rowLineH - 0.8);
-        docPdf.text(item.modalidade, colModalidadeX + 3, y + rowLineH - 0.8);
+        docPdf.text(modalidadeLine, colModalidadeX + 3, y + rowLineH - 0.8);
+        docPdf.text(cidadeLine, colCidadeX + 3, y + rowLineH - 0.8);
         docPdf.text(item.camiseta || '-', colCamisetaX + 3, y + rowLineH - 0.8);
         docPdf.text(item.kit, colKitX + 3, y + rowLineH - 0.8);
 
@@ -461,6 +513,47 @@ export default function AdminModalidades() {
     } catch (e) {
       console.error(e);
       if (!silent) showAlert('Erro ao gerar o PDF de resumo.', 'error');
+      throw e;
+    }
+  };
+
+  // Mesmos dados do PDF de resumo por grupo de modalidades, só que em CSV (abre no Excel).
+  const exportModalidadesGroupCSV = async (
+    mods: Modalidade[],
+    opts: { fileNameBase: string; kitFilterIds?: string[] | null; silent?: boolean }
+  ) => {
+    const { fileNameBase, kitFilterIds = null, silent = false } = opts;
+    try {
+      const [kits, camisetasSnap] = await Promise.all([fetchKits(), getDocs(collection(db, 'nightrun_camisetas'))]);
+      const camisetas = camisetasSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const modalidadeNomeById: Record<string, string> = {};
+      mods.forEach(mod => { modalidadeNomeById[mod.id!] = mod.nome; });
+      const modalidadeIds = mods.map(mod => mod.id).filter(Boolean) as string[];
+      const snap = await getDocs(query(collection(db, 'nightrun_registrations'), where('modalidadeId', 'in', modalidadeIds)));
+      const confirmados = snap.docs
+        .map(d => d.data())
+        .filter(r => r.paymentStatus === 'pago' || r.kitConfirmado || r.contractStatus === 'confirmado')
+        .filter(r => kitFilterIds === null || kitFilterIds.includes(r.kit || DEFAULT_KIT_ID))
+        .map(r => ({
+          nome: String(r.nome || 'Sem nome'),
+          cidade: String(r.endereco?.cidade || '-'),
+          modalidade: modalidadeNomeById[r.modalidadeId] || '',
+          camiseta: resolveCamisetaLabel(camisetas, r.tamanhoCamiseta),
+          kit: resolveKitNome(kits, r.kit, 'Kit Único'),
+        }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+
+      exportToCSV(confirmados, fileNameBase, [
+        { header: 'Nome', key: 'nome' },
+        { header: 'Modalidade', key: 'modalidade' },
+        { header: 'Cidade', key: 'cidade' },
+        { header: 'Camiseta', key: 'camiseta' },
+        { header: 'Kit', key: 'kit' },
+      ]);
+      if (!silent) showAlert('Planilha de resumo gerada.', 'success');
+    } catch (e) {
+      console.error(e);
+      if (!silent) showAlert('Erro ao gerar a planilha de resumo.', 'error');
       throw e;
     }
   };
@@ -585,7 +678,7 @@ export default function AdminModalidades() {
   // 4 grupos de Kids, ou "TODOS OS KIDS"), gera UM PDF só combinando todas elas - igual ao
   // botão "RESUMO MODALIDADES INFANTIS/ADULTO" - em vez de um arquivo separado por modalidade,
   // já que pra retirada de kit infantil normalmente não faz sentido separar por faixa etária.
-  const confirmBulkGenerate = async () => {
+  const confirmBulkGenerate = async (formato: 'pdf' | 'excel' = 'pdf') => {
     const kitFilterIds = Array.from(selectedKitIds);
     if (kitFilterIds.length === 0) return showAlert('Selecione ao menos um kit.', 'warning');
     const selecionadas = pendingPdfMods;
@@ -605,7 +698,8 @@ export default function AdminModalidades() {
 
       if (grupo.length === 1) {
         try {
-          await generateModalidadePdf(grupo[0], { kitFilterIds, silent: true });
+          if (formato === 'excel') await exportModalidadeCSV(grupo[0], { kitFilterIds, silent: true });
+          else await generateModalidadePdf(grupo[0], { kitFilterIds, silent: true });
           filesGenerated++;
         } catch (e) {
           console.error(e);
@@ -613,13 +707,21 @@ export default function AdminModalidades() {
         }
       } else {
         try {
-          await generateModalidadesGroupPdf(grupo, {
-            titulo: categoria === 'infantil' ? 'RESUMO MODALIDADES INFANTIS' : 'RESUMO MODALIDADES ADULTO',
-            infoText: `Todos os atletas confirmados nas modalidades ${categoria === 'infantil' ? 'infantis' : 'de adulto/adolescente'} selecionadas estão listados abaixo.`,
-            fileNameBase: `resumo-modalidades-${categoria}`,
-            kitFilterIds,
-            silent: true,
-          });
+          if (formato === 'excel') {
+            await exportModalidadesGroupCSV(grupo, {
+              fileNameBase: `resumo-modalidades-${categoria}`,
+              kitFilterIds,
+              silent: true,
+            });
+          } else {
+            await generateModalidadesGroupPdf(grupo, {
+              titulo: categoria === 'infantil' ? 'RESUMO MODALIDADES INFANTIS' : 'RESUMO MODALIDADES ADULTO',
+              infoText: `Todos os atletas confirmados nas modalidades ${categoria === 'infantil' ? 'infantis' : 'de adulto/adolescente'} selecionadas estão listados abaixo.`,
+              fileNameBase: `resumo-modalidades-${categoria}`,
+              kitFilterIds,
+              silent: true,
+            });
+          }
           filesGenerated++;
         } catch (e) {
           console.error(e);
@@ -630,8 +732,9 @@ export default function AdminModalidades() {
     }
 
     setBulkGenerating(false);
+    const rotulo = formato === 'excel' ? 'Planilha(s)' : 'PDF(s)';
     showAlert(
-      `${filesGenerated} PDF(s) gerado(s) para ${selecionadas.length} modalidade(s)${filesFailed ? ` (${filesFailed} com erro)` : ''}.`,
+      `${filesGenerated} ${rotulo} gerado(s) para ${selecionadas.length} modalidade(s)${filesFailed ? ` (${filesFailed} com erro)` : ''}.`,
       filesFailed ? 'warning' : 'success'
     );
   };
@@ -653,7 +756,7 @@ export default function AdminModalidades() {
             style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: bulkGenerating ? 'wait' : 'pointer' }}
           >
             <FileText size={18} />
-            {bulkGenerating ? 'GERANDO...' : 'RESUMO MODALIDADES ADULTO (PDF)'}
+            {bulkGenerating ? 'GERANDO...' : 'RESUMO MODALIDADES ADULTO'}
           </button>
           <button
             onClick={() => openKitFilterModal(infantilGroups.map(g => g.mod))}
@@ -661,7 +764,7 @@ export default function AdminModalidades() {
             style={{ background: '#6BFF2A', color: '#071A45', border: 'none', padding: '12px 24px', borderRadius: 12, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, cursor: bulkGenerating ? 'wait' : 'pointer', boxShadow: '0 4px 12px rgba(107,255,42,0.25)' }}
           >
             <FileText size={18} />
-            {bulkGenerating ? 'GERANDO...' : 'RESUMO MODALIDADES INFANTIS (PDF)'}
+            {bulkGenerating ? 'GERANDO...' : 'RESUMO MODALIDADES INFANTIS'}
           </button>
           <button
             onClick={() => handleOpenModal()}
@@ -791,7 +894,7 @@ export default function AdminModalidades() {
                     <button
                       onClick={() => openKitFilterModal([mod])}
                       disabled={bulkGenerating}
-                      title="Gerar PDF resumo"
+                      title="Gerar lista de confirmados (PDF ou Excel)"
                       style={{ background: '#eafff0', border: 'none', width: 36, height: 36, borderRadius: 10, color: '#16a34a', cursor: bulkGenerating ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: bulkGenerating ? 0.6 : 1 }}
                     >
                       <FileText size={16} />
@@ -840,7 +943,7 @@ export default function AdminModalidades() {
                   <button
                     onClick={() => openKitFilterModal(infantilGroups.map(g => g.mod))}
                     disabled={bulkGenerating}
-                    title="Gerar PDF combinado de todos os Kids"
+                    title="Gerar lista combinada de todos os Kids (PDF ou Excel)"
                     style={{ background: '#eafff0', border: 'none', width: 36, height: 36, borderRadius: 10, color: '#16a34a', cursor: bulkGenerating ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: bulkGenerating ? 0.6 : 1 }}
                   >
                     <FileText size={16} />
@@ -874,7 +977,7 @@ export default function AdminModalidades() {
               </button>
             </div>
             <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '4px 0 18px' }}>
-              O PDF de {pendingPdfMods.length} modalidade(s) vai listar só os atletas com os kits marcados abaixo.
+              A lista de {pendingPdfMods.length} modalidade(s) vai trazer só os atletas com os kits marcados abaixo.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 22 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', fontWeight: 800, fontSize: '0.8rem', color: '#071A45', borderBottom: '1px solid #f1f5f9', cursor: 'pointer' }}>
@@ -901,19 +1004,34 @@ export default function AdminModalidades() {
                 <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Nenhum kit cadastrado.</span>
               )}
             </div>
-            <button
-              onClick={confirmBulkGenerate}
-              disabled={selectedKitIds.size === 0}
-              style={{
-                width: '100%', background: '#6BFF2A', color: '#071A45', border: 'none', borderRadius: 12,
-                padding: '14px', fontWeight: 900, fontSize: '0.85rem', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', gap: 8, cursor: selectedKitIds.size === 0 ? 'not-allowed' : 'pointer',
-                opacity: selectedKitIds.size === 0 ? 0.5 : 1,
-              }}
-            >
-              <Download size={18} />
-              GERAR {pendingPdfMods.length} PDF(S)
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => confirmBulkGenerate('pdf')}
+                disabled={selectedKitIds.size === 0}
+                style={{
+                  flex: 1, background: '#6BFF2A', color: '#071A45', border: 'none', borderRadius: 12,
+                  padding: '14px', fontWeight: 900, fontSize: '0.85rem', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: 8, cursor: selectedKitIds.size === 0 ? 'not-allowed' : 'pointer',
+                  opacity: selectedKitIds.size === 0 ? 0.5 : 1,
+                }}
+              >
+                <Download size={18} />
+                {pendingPdfMods.length} PDF(S)
+              </button>
+              <button
+                onClick={() => confirmBulkGenerate('excel')}
+                disabled={selectedKitIds.size === 0}
+                style={{
+                  flex: 1, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 12,
+                  padding: '14px', fontWeight: 900, fontSize: '0.85rem', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: 8, cursor: selectedKitIds.size === 0 ? 'not-allowed' : 'pointer',
+                  opacity: selectedKitIds.size === 0 ? 0.5 : 1,
+                }}
+              >
+                <FileSpreadsheet size={18} />
+                EXCEL
+              </button>
+            </div>
           </div>
         </div>
       )}

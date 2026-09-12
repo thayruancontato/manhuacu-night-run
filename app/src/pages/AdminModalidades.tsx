@@ -219,7 +219,12 @@ export default function AdminModalidades() {
       docPdf.setTextColor(100, 116, 139);
       const infoLines = docPdf.splitTextToSize(infoText, usableW);
       docPdf.text(infoLines, marginX, y);
-      y += infoLines.length * 4.6 + 4;
+      y += infoLines.length * 4.6 + 5;
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.setFontSize(10.5);
+      docPdf.setTextColor(...NAVY_PDF);
+      docPdf.text(`${confirmados.length} confirmado(s) nesta lista`, marginX, y);
+      y += 6;
       drawTableHeader();
 
       if (confirmados.length === 0) {
@@ -403,7 +408,12 @@ export default function AdminModalidades() {
       docPdf.setTextColor(100, 116, 139);
       const infoLines = docPdf.splitTextToSize(infoText, usableW);
       docPdf.text(infoLines, marginX, y);
-      y += infoLines.length * 4.6 + 4;
+      y += infoLines.length * 4.6 + 5;
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.setFontSize(10.5);
+      docPdf.setTextColor(...NAVY_PDF);
+      docPdf.text(`${confirmados.length} confirmado(s) nesta lista`, marginX, y);
+      y += 6;
       drawTableHeader();
 
       if (confirmados.length === 0) {

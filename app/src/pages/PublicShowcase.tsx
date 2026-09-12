@@ -9,7 +9,14 @@ import '../App.css';
 // não só uma amostra.
 const SLOTS_POR_COLUNA = 16;
 const SECONDS_PER_CARD = 1.6;
-const ROTACAO_INTERVALO_MS = 4000;
+// Cada coluna demora SLOTS_POR_COLUNA * SECONDS_PER_CARD (~25,6s) pra completar uma volta
+// do loop de scroll e "emendar" de volta no início - como o conteúdo é duplicado 2x pra
+// fechar esse loop sem emenda visível, se a rotação for lenta demais a maioria das fotos
+// ainda é a mesma de 25,6s atrás quando a volta se repete, dando a impressão de "resetou
+// com as mesmas fotos". Por isso a cada tick roda uma rotação POR COLUNA (não só uma no
+// total) com um intervalo curto, pra virtualmente toda posição já ter trocado pelo menos
+// uma vez antes do loop dar a volta de novo.
+const ROTACAO_INTERVALO_MS = 1500;
 const FADE_MS = 900;
 
 // Apoiadores exibidos na faixa lateral - logos brancos (pasta /BRANCOS), feitos pra ficar
@@ -170,40 +177,58 @@ export default function PublicShowcase() {
         const pool = atletasRef.current;
         if (pool.length === 0) return prev;
 
-        if (filaRef.current.length === 0) {
-          filaRef.current = montarFila(prev.length, prev[0].length);
-        }
-
-        let colIndex = -1;
-        let slotIndex = -1;
-        const adiados: { col: number; slot: number }[] = [];
-        while (filaRef.current.length > 0) {
-          const candidato = filaRef.current.shift()!;
-          const els = document.querySelectorAll(`[data-slot="${candidato.col}-${candidato.slot}"]`);
-          const visivel = els.length > 0 && Array.from(els).some(el => {
-            const r = el.getBoundingClientRect();
-            return r.bottom > -40 && r.top < window.innerHeight + 40;
-          });
-          if (!visivel) { colIndex = candidato.col; slotIndex = candidato.slot; break; }
-          adiados.push(candidato);
-          if (adiados.length > 20) break; // evita travar procurando indefinidamente
-        }
-        filaRef.current.push(...adiados);
-        if (colIndex === -1) return prev; // tudo visível agora (tela pequena) - espera o próximo tick
-
-        // Nunca repete alguém que já está em outra posição da parede nesse momento - só
-        // sorteia entre quem ainda não aparece em lugar nenhum agora. Só recai no pool
-        // inteiro no caso extremo de ter mais posições na parede do que atletas confirmados
-        // (aí repetir é matematicamente inevitável).
-        const idsNaParede = new Set<string>();
-        prev.forEach(col => col.forEach(s => idsNaParede.add(s.atleta.id)));
-        const candidatos = pool.filter(a => !idsNaParede.has(a.id));
-        const poolSorteio = candidatos.length > 0 ? candidatos : pool;
-        const novoAtleta = poolSorteio[Math.floor(Math.random() * poolSorteio.length)];
-        if (novoAtleta.id === prev[colIndex][slotIndex].atleta.id) return prev;
+        const numColunas = prev.length;
         const proximo = prev.map(col => col.slice());
-        proximo[colIndex][slotIndex] = { atleta: novoAtleta, versao: prev[colIndex][slotIndex].versao + 1 };
-        return proximo;
+        const idsNaParede = new Set<string>();
+        proximo.forEach(col => col.forEach(s => idsNaParede.add(s.atleta.id)));
+        let mudou = false;
+
+        // Uma rotação POR COLUNA a cada tick (não só uma no total) - ver comentário na
+        // constante ROTACAO_INTERVALO_MS. Continua puxando da mesma fila anti-agrupamento,
+        // só que consome vários pares por tick em vez de um só.
+        for (let i = 0; i < numColunas; i++) {
+          if (filaRef.current.length === 0) {
+            filaRef.current = montarFila(numColunas, prev[0].length);
+          }
+
+          // Procura um candidato fora da área visível em TODA a fila restante (não só nos
+          // primeiros N) - com o tick mais rápido, a janela visível quase não muda de um
+          // tick pro outro, então limitar a busca travava a rotação inteira por vários
+          // segundos seguidos. Se mesmo assim ninguém estiver fora da tela (tela muito
+          // pequena / conteúdo quase todo visível), rotaciona mesmo assim o primeiro da
+          // fila - o fade de 900ms já disfarça a troca, não fica um corte seco.
+          let candidato = filaRef.current.shift()!;
+          let tentativas = 1;
+          while (tentativas < filaRef.current.length + 1) {
+            const els = document.querySelectorAll(`[data-slot="${candidato.col}-${candidato.slot}"]`);
+            const visivel = els.length > 0 && Array.from(els).some(el => {
+              const r = el.getBoundingClientRect();
+              return r.bottom > -40 && r.top < window.innerHeight + 40;
+            });
+            if (!visivel) break;
+            filaRef.current.push(candidato);
+            candidato = filaRef.current.shift()!;
+            tentativas++;
+          }
+          const { col: colIndex, slot: slotIndex } = candidato;
+
+          // Nunca repete alguém que já está em outra posição da parede nesse momento (incluindo
+          // trocas já feitas neste mesmo tick) - só sorteia entre quem ainda não aparece em
+          // lugar nenhum agora. Só recai no pool inteiro no caso extremo de ter mais posições na
+          // parede do que atletas confirmados (aí repetir é matematicamente inevitável).
+          const candidatos = pool.filter(a => !idsNaParede.has(a.id));
+          const poolSorteio = candidatos.length > 0 ? candidatos : pool;
+          const novoAtleta = poolSorteio[Math.floor(Math.random() * poolSorteio.length)];
+          const atual = proximo[colIndex][slotIndex].atleta;
+          if (novoAtleta.id === atual.id) continue;
+
+          idsNaParede.delete(atual.id);
+          idsNaParede.add(novoAtleta.id);
+          proximo[colIndex][slotIndex] = { atleta: novoAtleta, versao: proximo[colIndex][slotIndex].versao + 1 };
+          mudou = true;
+        }
+
+        return mudou ? proximo : prev;
       });
     }, ROTACAO_INTERVALO_MS);
     return () => clearInterval(interval);
